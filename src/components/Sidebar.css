@@ -169,6 +169,21 @@
   background-color: #fcfcfc;
 }
 
+.filter-toggle-container {
+  margin-bottom: var(--sp-4);
+}
+
+.toggle-label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+.toggle-sublabel {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .stock-toggle-btn {
   width: 100%;
   display: flex;

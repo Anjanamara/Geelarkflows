@@ -118,17 +118,17 @@ export default function Sidebar() {
 
       <div className="sidebar-footer">
         <div className="filter-toggle-container">
-          <div className="toggle-label-group">
-            <span className="toggle-label">Instock Only</span>
-            <span className="toggle-sublabel">Hide sold out assets</span>
-          </div>
           <button
-            className={`toggle-switch ${instockOnly ? 'active' : ''}`}
+            className={`stock-toggle-btn ${instockOnly ? 'active' : ''}`}
             onClick={() => setInstockOnly(!instockOnly)}
             role="switch"
             aria-checked={instockOnly}
           >
-            <span className="toggle-handle" />
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+              <span className="toggle-label">Instock Only</span>
+              <span className="toggle-sublabel">Hide sold out assets</span>
+            </div>
+            <span className="toggle-switch" />
           </button>
         </div>
 

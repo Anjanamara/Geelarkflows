@@ -8,6 +8,8 @@ export function FilterProvider({ children }) {
   const [selectedPlatforms, setSelectedPlatforms] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [instockOnly, setInstockOnly] = useState(false);
+  const [minPrice, setMinPrice] = useState('');
+  const [maxPrice, setMaxPrice] = useState('');
 
   const togglePlatform = (platformId) => {
     setSelectedPlatforms((prev) =>
@@ -22,6 +24,8 @@ export function FilterProvider({ children }) {
     setSelectedPlatforms([]);
     setSelectedCategory('all');
     setInstockOnly(false);
+    setMinPrice('');
+    setMaxPrice('');
   };
 
   const filteredProducts = useMemo(() => {
@@ -32,7 +36,6 @@ export function FilterProvider({ children }) {
       }
 
       // 2. Category Filter
-      // Categories: 'all', 'flows', 'accounts-instagram', 'accounts-tiktok', 'accounts-gmail'
       if (selectedCategory !== 'all') {
         if (selectedCategory === 'flows') {
           if (product.type !== 'flow') return false;
@@ -53,7 +56,15 @@ export function FilterProvider({ children }) {
         }
       }
 
-      // 4. Search Query Filter
+      // 4. Pricing Filter
+      if (minPrice !== '' && !isNaN(minPrice)) {
+        if (product.price < parseFloat(minPrice)) return false;
+      }
+      if (maxPrice !== '' && !isNaN(maxPrice)) {
+        if (product.price > parseFloat(maxPrice)) return false;
+      }
+
+      // 5. Search Query Filter
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
         const matchesTitle = product.title.toLowerCase().includes(query);
@@ -79,7 +90,7 @@ export function FilterProvider({ children }) {
 
       return true;
     });
-  }, [selectedCategory, selectedPlatforms, searchQuery, instockOnly]);
+  }, [selectedCategory, selectedPlatforms, searchQuery, instockOnly, minPrice, maxPrice]);
 
   const value = useMemo(
     () => ({
@@ -92,10 +103,14 @@ export function FilterProvider({ children }) {
       setSelectedCategory,
       instockOnly,
       setInstockOnly,
+      minPrice,
+      setMinPrice,
+      maxPrice,
+      setMaxPrice,
       filteredProducts,
       clearFilters,
     }),
-    [searchQuery, selectedPlatforms, selectedCategory, instockOnly, filteredProducts]
+    [searchQuery, selectedPlatforms, selectedCategory, instockOnly, minPrice, maxPrice, filteredProducts]
   );
 
   return <FilterContext.Provider value={value}>{children}</FilterContext.Provider>;

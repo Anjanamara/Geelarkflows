@@ -7,6 +7,12 @@
   min-height: 100vh;
   position: relative;
   background-color: var(--bg-secondary);
+  --current-sidebar-width: var(--sidebar-width);
+  transition: --current-sidebar-width 0.3s ease;
+}
+
+.app-container.sidebar-collapsed {
+  --current-sidebar-width: 80px;
 }
 
 .main-content {
@@ -14,13 +20,6 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  margin-left: var(--sidebar-width);
-}
-
-/* Ensure no mobile stacking since this is Desktop-first */
-@media (max-width: 1024px) {
-  /* Enforce desktop layout even on slightly smaller screens as per instructions */
-  .app-container {
-    min-width: 1024px;
-  }
+  margin-left: var(--current-sidebar-width);
+  transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }

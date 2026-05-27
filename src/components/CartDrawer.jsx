@@ -6,6 +6,7 @@ export default function CartDrawer() {
   const { cart, isCartOpen, closeCart, removeFromCart, updateQuantity, cartTotal } = useCart();
   const [checkingOut, setCheckingOut] = useState(false);
   const [checkoutComplete, setCheckoutComplete] = useState(false);
+  const [selectedPayment, setSelectedPayment] = useState('BTC');
 
   if (!isCartOpen) return null;
 
@@ -67,18 +68,27 @@ export default function CartDrawer() {
         {!checkoutComplete && cart.length > 0 && (
           <div className="cart-footer">
             <div className="crypto-indicators">
-              <span className="crypto-badge">
+              <button 
+                className={`crypto-badge ${selectedPayment === 'BTC' ? 'selected' : ''}`}
+                onClick={() => setSelectedPayment('BTC')}
+              >
                 <svg fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
                 BTC
-              </span>
-              <span className="crypto-badge">
+              </button>
+              <button 
+                className={`crypto-badge ${selectedPayment === 'ETH' ? 'selected' : ''}`}
+                onClick={() => setSelectedPayment('ETH')}
+              >
                 <svg fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L2 22h20L12 2zm0 4.1L18.4 18H5.6L12 6.1z"/></svg>
                 ETH
-              </span>
-              <span className="crypto-badge">
+              </button>
+              <button 
+                className={`crypto-badge ${selectedPayment === 'USDT' ? 'selected' : ''}`}
+                onClick={() => setSelectedPayment('USDT')}
+              >
                 <svg fill="currentColor" viewBox="0 0 24 24"><path d="M12 2c5.52 2 10 6.48 10 12s-4.48 10-10 10S2 19.52 2 14c0-5.52 4.48-10 10-12zm0 2.22A8.006 8.006 0 004.22 12 8.006 8.006 0 0012 19.78 8.006 8.006 0 0019.78 12 8.006 8.006 0 0012 4.22z"/></svg>
                 USDT
-              </span>
+              </button>
             </div>
             <div className="summary-row total">
               <span>Total Secured Amount</span>

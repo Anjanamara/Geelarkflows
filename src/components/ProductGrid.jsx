@@ -3,7 +3,7 @@ import FlowCard from './FlowCard';
 import AccountCard from './AccountCard';
 import './ProductGrid.css';
 
-export default function ProductGrid() {
+export default function ProductGrid({ onViewDetails }) {
   const { filteredProducts, clearFilters } = useFilter();
 
   if (filteredProducts.length === 0) {
@@ -40,9 +40,9 @@ export default function ProductGrid() {
     <div className="product-grid">
       {filteredProducts.map((product) => {
         if (product.type === 'flow') {
-          return <FlowCard key={product.id} product={product} />;
+          return <FlowCard key={product.id} product={product} onViewDetails={onViewDetails} />;
         } else {
-          return <AccountCard key={product.id} product={product} />;
+          return <AccountCard key={product.id} product={product} onViewDetails={onViewDetails} />;
         }
       })}
     </div>

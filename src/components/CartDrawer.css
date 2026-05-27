@@ -24,7 +24,7 @@
   right: 0;
   width: 24rem; /* w-96 */
   height: 100vh; /* h-full */
-  background: #ffffff; /* bg-white */
+  background: var(--bg-card);
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); /* shadow-2xl */
   z-index: 50;
   display: flex;
@@ -46,7 +46,7 @@
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid var(--border-light);
-  background: #fcfcfc;
+  background: var(--bg-secondary);
 }
 
 .cart-title {
@@ -182,7 +182,7 @@
 .cart-footer {
   padding: var(--sp-6);
   border-top: 1px solid var(--border-medium);
-  background: #fcfcfc;
+  background: var(--bg-secondary);
 }
 
 .summary-row {
@@ -223,9 +223,23 @@
   font-size: 11px;
   color: var(--text-muted);
   background: var(--bg-secondary);
-  padding: 4px 8px;
+  padding: 6px 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-light);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.crypto-badge:hover {
+  border-color: var(--border-medium);
+  background: var(--bg-tertiary);
+}
+
+.crypto-badge.selected {
+  border-color: var(--accent-indigo);
+  color: var(--accent-indigo);
+  background: rgba(99, 102, 241, 0.1);
+  font-weight: var(--weight-bold);
 }
 
 .crypto-badge svg {

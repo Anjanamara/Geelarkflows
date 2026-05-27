@@ -107,9 +107,71 @@ a { color: var(--accent-indigo); text-decoration: none; }
 button { cursor: pointer; font-family: var(--font-body); border: none; background: none; }
 input { font-family: var(--font-body); border: none; outline: none; background: none; color: var(--text-primary); }
 
+.btn-primary {
+  background: var(--accent-indigo);
+  color: white !important;
+  border-radius: var(--radius-md);
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  transition: var(--transition-fast);
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-primary:hover {
+  background: #4f46e5;
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  transition: var(--transition-fast);
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-secondary:hover {
+  background: var(--bg-secondary);
+}
+
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--bg-tertiary); border-radius: var(--radius-full); }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
 .mono { font-family: var(--font-mono); }
+
+/* Dark Theme Overrides */
+body.dark-theme {
+  /* Background */
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #13131a;
+  --bg-tertiary: #1f1f2e;
+  --bg-card: #181822;
+  --bg-overlay: rgba(0, 0, 0, 0.7);
+
+  /* Text */
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  --text-inverse: #0a0a0f;
+
+  /* Borders */
+  --border-light: rgba(255, 255, 255, 0.05);
+  --border-medium: rgba(255, 255, 255, 0.1);
+  --border-focus: rgba(99, 102, 241, 0.5);
+
+  /* Platform Adjustments for dark mode visibility */
+  --color-tiktok: #ffffff;
+}

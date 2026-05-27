@@ -4,11 +4,25 @@
 
 .product-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: var(--sp-6);
   padding: var(--sp-6) var(--sp-8);
   flex: 1;
   background-color: var(--bg-primary);
+}
+
+@media (max-width: 1200px) {
+  .product-grid {
+    padding: var(--sp-4) var(--sp-5);
+    gap: var(--sp-4);
+  }
+}
+
+@media (max-width: 768px) {
+  .product-grid {
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    padding: var(--sp-3) var(--sp-4);
+  }
 }
 
 /* ============================================================

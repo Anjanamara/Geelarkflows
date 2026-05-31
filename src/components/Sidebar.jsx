@@ -38,7 +38,21 @@ const AllAssetsIcon = () => (
   </svg>
 );
 
-export default function Sidebar({ isCollapsed, toggleCollapse, isDarkMode, toggleTheme }) {
+const SettingsIcon = () => (
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="3"></circle>
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+  </svg>
+);
+
+const BriefcaseIcon = () => (
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+    <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+  </svg>
+);
+
+export default function Sidebar({ isCollapsed, toggleCollapse, isDarkMode, toggleTheme, onOpenCustomRequest }) {
   const {
     selectedCategory,
     setSelectedCategory,
@@ -170,6 +184,31 @@ export default function Sidebar({ isCollapsed, toggleCollapse, isDarkMode, toggl
                 </li>
               </ul>
             )}
+          </li>
+        </ul>
+
+        {/* Services Section */}
+        {!isCollapsed && <div className="nav-section-title" style={{ marginTop: 'var(--sp-6)' }}>SERVICES</div>}
+        <ul className="nav-list">
+          <li className="nav-item">
+            <button
+              className="nav-link"
+              onClick={() => onOpenCustomRequest && onOpenCustomRequest('flow')}
+              title={isCollapsed ? "Custom Flows" : ""}
+            >
+              <span className="nav-icon"><SettingsIcon /></span>
+              {!isCollapsed && <span className="nav-label">Custom Flows</span>}
+            </button>
+          </li>
+          <li className="nav-item">
+            <button
+              className="nav-link"
+              onClick={() => onOpenCustomRequest && onOpenCustomRequest('consulting')}
+              title={isCollapsed ? "Consulting" : ""}
+            >
+              <span className="nav-icon"><BriefcaseIcon /></span>
+              {!isCollapsed && <span className="nav-label">Consulting</span>}
+            </button>
           </li>
         </ul>
 

@@ -7,12 +7,15 @@ import ProductGrid from './components/ProductGrid';
 import CartDrawer from './components/CartDrawer';
 import CartButton from './components/CartButton';
 import ProductModal from './components/ProductModal';
+import CustomRequestModal from './components/CustomRequestModal';
 import './App.css';
 
 export default function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isCustomRequestModalOpen, setIsCustomRequestModalOpen] = useState(false);
+  const [customRequestType, setCustomRequestType] = useState('flow'); // 'flow' or 'consulting'
 
   useEffect(() => {
     if (isDarkMode) {
@@ -31,6 +34,10 @@ export default function App() {
             toggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
             isDarkMode={isDarkMode}
             toggleTheme={() => setIsDarkMode(!isDarkMode)}
+            onOpenCustomRequest={(type) => {
+              setCustomRequestType(type);
+              setIsCustomRequestModalOpen(true);
+            }}
           />
           
           <main className="main-content">
@@ -44,6 +51,12 @@ export default function App() {
           <ProductModal 
             product={selectedProduct} 
             onClose={() => setSelectedProduct(null)} 
+          />
+
+          <CustomRequestModal
+            isOpen={isCustomRequestModalOpen}
+            onClose={() => setIsCustomRequestModalOpen(false)}
+            requestType={customRequestType}
           />
         </div>
       </FilterProvider>

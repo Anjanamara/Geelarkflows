@@ -1,0 +1,10 @@
+{
+  "name": "GeeLark Flows",
+  "short_name": "GeeLark Flows",
+  "description": "Reusable GeeLark automation flows for social media, dating apps, mobile SEO, and account operations at scale.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#111412",
+  "theme_color": "#111412",
+  "icons": []
+}

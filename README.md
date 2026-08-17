@@ -1,6 +1,6 @@
-# Nexus Vault — Digital Asset & Automation Marketplace
+# GeeLark Flows — Reusable Automation Marketplace
 
-A high-conversion, premium marketplace web application for selling GeeLark RPA automation flows and aged social/communication accounts.
+A responsive marketplace for reusable GeeLark automation flows covering social account creation, warmup, publishing, profile management, dating apps, video tooling, analytics, mobile SEO, and custom development.
 
 ## Technology Stack & Architectural Patterns
 
@@ -15,14 +15,11 @@ A high-conversion, premium marketplace web application for selling GeeLark RPA a
 - **Spacing Grid**: Strict 4px baseline (`--sp-1: 4px` through `--sp-16: 64px`). No arbitrary values.
 - **Typography Scale**: Body paired with *Inter*, metrics and system scripts utilizing *JetBrains Mono* to enforce technical confidence.
 
-## Run & Deploy Locally
+## Run Locally
 
 Ensure you have Node.js installed, then execute:
 
 ```bash
-# Navigate to project root
-cd marketplace
-
 # Install dependencies
 npm install
 
@@ -31,3 +28,23 @@ npm run dev
 ```
 
 The application will start on `http://localhost:5173`.
+
+## SEO and Search Engine Setup
+
+The production build creates crawlable static pages for every flow, unique titles and descriptions, canonical URLs, Product and Breadcrumb structured data, an XML sitemap, a plain-text Bing sitemap, `robots.txt`, and an IndexNow submission list.
+
+```bash
+# Optional: copy .env.example to .env and add ownership verification tokens
+npm run build
+
+# Run only after the new build and IndexNow key file are live
+npm run seo:indexnow
+```
+
+Production discovery files:
+
+- `https://geelarkflows.com/sitemap.xml`
+- `https://geelarkflows.com/sitemap.txt`
+- `https://geelarkflows.com/robots.txt`
+
+Add the Google Search Console token to `GOOGLE_SITE_VERIFICATION` and the Bing Webmaster Tools token to `BING_SITE_VERIFICATION` in `.env` before building. Submit the XML sitemap in both webmaster dashboards after deployment.

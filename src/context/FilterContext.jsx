@@ -70,6 +70,11 @@ export function FilterProvider({ children }) {
         const matchesTitle = product.title.toLowerCase().includes(query);
         const matchesType = product.type.toLowerCase().includes(query);
         const matchesPlatform = product.platform.toLowerCase().includes(query);
+        const matchesDescription = product.details?.description?.toLowerCase().includes(query);
+        const matchesCategory = product.details?.category?.toLowerCase().includes(query);
+        const matchesSupportedPlatforms = product.details?.supportedPlatforms?.some((platform) =>
+          platform.toLowerCase().includes(query)
+        );
         
         let matchesFeatures = false;
         if (product.details && product.details.features) {
@@ -83,7 +88,16 @@ export function FilterProvider({ children }) {
           matchesFlowType = product.details.flowType.toLowerCase().includes(query);
         }
 
-        if (!matchesTitle && !matchesType && !matchesPlatform && !matchesFeatures && !matchesFlowType) {
+        if (
+          !matchesTitle &&
+          !matchesType &&
+          !matchesPlatform &&
+          !matchesDescription &&
+          !matchesCategory &&
+          !matchesSupportedPlatforms &&
+          !matchesFeatures &&
+          !matchesFlowType
+        ) {
           return false;
         }
       }

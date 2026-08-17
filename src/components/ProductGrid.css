@@ -1,115 +1,54 @@
-/* ============================================================
-   GeeLark Flow Marketplace — ProductGrid Styling
-   ============================================================ */
-
 .product-grid {
+  margin-top: 22px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: var(--sp-6);
-  padding: var(--sp-6) var(--sp-8);
-  flex: 1;
-  background-color: var(--bg-primary);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 16px;
 }
-
-@media (max-width: 1200px) {
-  .product-grid {
-    padding: var(--sp-4) var(--sp-5);
-    gap: var(--sp-4);
-  }
-}
-
-@media (max-width: 768px) {
-  .product-grid {
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    padding: var(--sp-3) var(--sp-4);
-  }
-}
-
-/* ============================================================
-   Empty State Visual
-   ============================================================ */
 
 .empty-grid-container {
+  min-height: 390px;
+  margin-top: 22px;
+  padding: 60px 24px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: var(--sp-16) var(--sp-8);
-  text-align: center;
-  flex: 1;
-  grid-column: 1 / -1; /* Span all columns */
-}
-
-.terminal-box {
+  border: 1px dashed var(--border-medium);
+  border-radius: 12px;
   background: var(--bg-card);
-  border: 1px solid var(--border-medium);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
-  overflow: hidden;
-  text-align: left;
-  max-width: 460px;
-  width: 100%;
+  text-align: center;
 }
 
-.terminal-header {
-  background: var(--bg-tertiary);
-  padding: var(--sp-2) var(--sp-4);
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  border-bottom: 1px solid var(--border-medium);
-}
-
-.terminal-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: var(--radius-full);
-}
-
-.terminal-dot.red { background-color: var(--accent-danger); }
-.terminal-dot.yellow { background-color: #f59e0b; }
-.terminal-dot.green { background-color: var(--accent-success); }
-
-.terminal-title {
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-  margin-left: var(--sp-2);
-}
-
-.terminal-body {
-  padding: var(--sp-4);
-  font-size: var(--text-sm);
-  line-height: 1.6;
+.empty-code {
+  color: var(--accent-lime);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.13em;
 }
 
 .empty-title {
-  font-size: var(--text-xl);
-  font-weight: var(--weight-bold);
+  margin-top: 15px;
   color: var(--text-primary);
-  margin-top: var(--sp-6);
-  margin-bottom: var(--sp-2);
+  font-size: 25px;
+  letter-spacing: -0.035em;
 }
 
 .empty-description {
-  font-size: var(--text-base);
+  max-width: 470px;
+  margin-top: 9px;
   color: var(--text-secondary);
-  max-width: 440px;
-  margin-bottom: var(--sp-6);
+  font-size: 13px;
+  line-height: 1.65;
 }
 
 .reset-filters-btn {
-  background: var(--accent-indigo);
-  color: var(--text-inverse);
-  font-family: var(--font-body);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  padding: var(--sp-3) var(--sp-6);
-  border-radius: var(--radius-md);
-  transition: var(--transition-fast);
-}
-
-.reset-filters-btn:hover {
-  background: #4f46e5;
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-hover);
+  min-height: 42px;
+  margin-top: 22px;
+  padding: 0 17px;
+  border-radius: 7px;
+  background: var(--accent-lime);
+  color: #09100d;
+  font-size: 12px;
+  font-weight: 800;
 }

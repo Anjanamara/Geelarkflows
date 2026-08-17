@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/generate-seo.mjs",
     "preview": "vite preview",
+    "seo:generate": "node scripts/generate-seo.mjs",
+    "seo:indexnow": "node scripts/submit-indexnow.mjs",
     "deploy": "wrangler deploy"
   },
   "dependencies": {

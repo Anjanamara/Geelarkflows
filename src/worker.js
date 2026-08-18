@@ -208,6 +208,16 @@ app.post('/checkout/create', async (c) => {
     // 4. NOWPayments Live Invoice Creation
     if (apiKey) {
       try {
+        let requestOrigin = 'https://geelarkflows.com';
+        try {
+          if (c.req.url) {
+            const parsedUrl = new URL(c.req.url);
+            if (parsedUrl.protocol.startsWith('http') && !parsedUrl.hostname.includes('localhost') && !parsedUrl.hostname.includes('127.0.0.1')) {
+              requestOrigin = parsedUrl.origin;
+            }
+          }
+        } catch (urlErr) {}
+
         const nowPayRes = await fetch('https://api.nowpayments.io/v1/payment', {
           method: 'POST',
           headers: {
@@ -220,7 +230,7 @@ app.post('/checkout/create', async (c) => {
             pay_currency: networkConfig.nowpayments_currency,
             order_id: orderId,
             order_description: `GeeLark Flows Order ${orderId} (${networkConfig.full_label})`,
-            ipn_callback_url: `${c.req.url.origin}/api/webhooks/crypto`,
+            ipn_callback_url: `${requestOrigin}/api/webhooks/crypto`,
           }),
         });
 

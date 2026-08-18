@@ -432,7 +432,9 @@ app.post('/webhooks/crypto', async (c) => {
     console.error('Webhook processing error:', err);
     return c.json({ success: false, error: err.message }, 500);
   }
-}// GET /api/checkout/status/:id (Queries by payment_id or order_id)
+});
+
+// GET /api/checkout/status/:id (Queries by payment_id or order_id)
 app.get('/checkout/status/:id', async (c) => {
   try {
     const id = c.req.param('id');

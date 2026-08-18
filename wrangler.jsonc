@@ -1,8 +1,22 @@
 {
-  "name": "geelarkflows",
-  "compatibility_date": "2026-05-25",
-  "assets": {
-    "directory": "./dist",
-    "not_found_handling": "single-page-application"
-  }
+	"name": "geelarkflows",
+	"main": "src/worker.js",
+	"compatibility_date": "2026-05-25",
+	"assets": {
+		"directory": "./dist",
+		"not_found_handling": "single-page-application"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "geelarkflows_payment",
+			"database_id": "d9f6006d-08ff-4869-9b3c-c0e068f4118a"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "FLOWS_BUCKET",
+			"bucket_name": "geelark-digital-assets"
+		}
+	]
 }

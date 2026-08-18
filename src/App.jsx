@@ -6,6 +6,9 @@ import ProductGrid from './components/ProductGrid';
 import CartDrawer from './components/CartDrawer';
 import ProductModal from './components/ProductModal';
 import CustomRequestModal from './components/CustomRequestModal';
+import CartToast from './components/CartToast';
+import FloatingCart from './components/FloatingCart';
+import MrBeanFoldAnimation from './components/MrBeanFoldAnimation';
 import { products, specialties } from './data/products';
 import './App.css';
 
@@ -45,17 +48,13 @@ const faqs = [
     answer: 'Yes. Instagram, TikTok, Snapchat, Reddit, Facebook, YouTube, Threads, and dating-app workflows can be prepared for repeatable multi-account operations when your setup supports it.',
   },
   {
-    question: 'Do all automation flows include a video demo?',
-    answer: 'Video demos appear only when a real demonstration is available for that flow. Products without a demo stay clean and compact without an empty video placeholder.',
-  },
-  {
     question: 'Can you build a custom GeeLark RPA workflow?',
     answer: 'Yes. Custom development is available for video automation, metadata workflows, analytics tracking, mobile SEO searches, content generation, and large-scale account operations.',
   },
 ];
 
 function Storefront() {
-  const { cartItemCount, openCart } = useCart();
+  const { cartItemCount, openCart, activeFoldAnimation, handleFoldArrival, handleFoldComplete } = useCart();
   const [selectedProduct, setSelectedProduct] = useState(getProductFromPath);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [isCustomRequestModalOpen, setIsCustomRequestModalOpen] = useState(false);
@@ -165,20 +164,22 @@ function Storefront() {
   return (
     <div className="site-shell">
       <header className="site-nav">
-        <a className="brand-lockup" href="#top" aria-label="GeeLark Flows home">
-          <span className="brand-mark">GF</span>
-          <span>
-            <strong>GeeLark</strong>
-            <small>Flows</small>
-          </span>
-        </a>
+        <div className="nav-left">
+          <a className="brand-lockup" href="#top" aria-label="GeeLark Flows home">
+            <span className="brand-mark">GF</span>
+            <span>
+              <strong>GeeLark</strong>
+              <small>Flows</small>
+            </span>
+          </a>
 
-        <nav className="desktop-nav" aria-label="Primary navigation">
-          <a href="#catalog">Flow catalog</a>
-          <a href="#specialties">Specialties</a>
-          <a href="#faq">FAQ</a>
-          <button type="button" onClick={() => openRequest('flow')}>Custom development</button>
-        </nav>
+          <nav className="desktop-nav" aria-label="Primary navigation">
+            <a href="#catalog">Flow catalog</a>
+            <a href="#specialties">Specialties</a>
+            <a href="#faq">FAQ</a>
+            <button type="button" onClick={() => openRequest('flow')}>Custom development</button>
+          </nav>
+        </div>
 
         <div className="nav-actions">
           <button
@@ -189,11 +190,21 @@ function Storefront() {
           >
             {isDarkMode ? 'Light' : 'Dark'}
           </button>
-          <button type="button" className="nav-cart" onClick={openCart}>
-            Cart <span>{cartItemCount}</span>
-          </button>
         </div>
       </header>
+
+      {/* Floating Technical Cart (Always accessible at top-right on scroll) */}
+      <FloatingCart />
+
+      {/* Iconic Mr. Bean "Fold the Flow into Cart" Micro-Interaction */}
+      <MrBeanFoldAnimation
+        activeFlow={activeFoldAnimation}
+        onArrival={handleFoldArrival}
+        onComplete={handleFoldComplete}
+      />
+
+      {/* Toast Feedback (Appears below floating cart after impact) */}
+      <CartToast />
 
       <main id="top">
         <section className="hero-section">

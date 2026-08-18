@@ -4,7 +4,7 @@ import { platforms } from '../data/products';
 import './ProductModal.css';
 
 export default function ProductModal({ product, onClose }) {
-  const { addToCart, lastAddedId } = useCart();
+  const { cart, addToCart, addToCartWithAnimation, lastAddedId, openCart } = useCart();
 
   useEffect(() => {
     if (!product) return undefined;
@@ -18,8 +18,28 @@ export default function ProductModal({ product, onClose }) {
   if (!product) return null;
 
   const platform = platforms.find((item) => item.id === product.platform);
-  const isAdded = lastAddedId === product.id;
+  const isInCart = cart.some((item) => item.id === product.id);
+  const isJustAdded = lastAddedId === product.id;
   const { details } = product;
+
+  // 1. Add to cart with animation (stays in browsing flow)
+  const handleAddToCart = (event) => {
+    if (isInCart) {
+      onClose();
+      openCart();
+      return;
+    }
+    addToCartWithAnimation(product, event.currentTarget);
+  };
+
+  // 2. Direct Checkout: Instantly puts flow in cart, closes details, and opens checkout modal
+  const handleDirectCheckout = () => {
+    if (!isInCart) {
+      addToCart(product);
+    }
+    onClose();
+    openCart();
+  };
 
   return (
     <div className="modal-overlay" onClick={onClose} role="presentation">
@@ -45,7 +65,14 @@ export default function ProductModal({ product, onClose }) {
           <p>{details.description}</p>
           <div className="modal-price-row">
             <div className="modal-price">${product.price.toLocaleString('en-US')}</div>
-            <span>Reusable workflow · Unlimited runs</span>
+            <span className="modal-price-sub">Reusable workflow · Instant delivery</span>
+            <button
+              type="button"
+              className="modal-quick-checkout-pill"
+              onClick={handleDirectCheckout}
+            >
+              Direct checkout →
+            </button>
           </div>
         </div>
 
@@ -100,9 +127,26 @@ export default function ProductModal({ product, onClose }) {
         </div>
 
         <div className="modal-footer">
-          <button className="btn-secondary" onClick={onClose}>Keep browsing</button>
-          <button className="btn-primary modal-buy-btn" onClick={() => addToCart(product)}>
-            {isAdded ? 'Added to cart ✓' : `Get this flow — $${product.price.toLocaleString('en-US')}`}
+          <button type="button" className="btn-secondary modal-browse-btn" onClick={onClose}>
+            Keep browsing
+          </button>
+          <button
+            type="button"
+            className={`btn-secondary modal-add-btn ${isInCart ? 'in-cart' : ''}`}
+            onClick={handleAddToCart}
+          >
+            {isJustAdded
+              ? 'Added ✓'
+              : isInCart
+              ? 'In cart ✓'
+              : '+ Add to cart'}
+          </button>
+          <button
+            type="button"
+            className="btn-primary modal-direct-btn"
+            onClick={handleDirectCheckout}
+          >
+            Direct checkout · ${product.price.toLocaleString('en-US')} →
           </button>
         </div>
       </div>

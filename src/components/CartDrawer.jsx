@@ -1,102 +1,873 @@
-import { useState } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useCart } from '../context/CartContext';
+import { products } from '../data/products';
+import { USDT_NETWORKS, USDT_NETWORKS_LIST, getNetworkConfig, DEFAULT_NETWORK_ID } from '../data/paymentConfig';
 import './CartDrawer.css';
 
+const ACTIVE_PAYMENT_STORAGE_KEY = 'geelark_active_payment';
+
 export default function CartDrawer() {
-  const { cart, isCartOpen, closeCart, removeFromCart, updateQuantity, cartTotal } = useCart();
+  const { cart, isCartOpen, closeCart, removeFromCart, addToCart, cartTotal, clearCart } = useCart();
+  
+  // Explicit State Machine: 'cart' | 'awaiting_payment' | 'verifying' | 'completed'
+  const [checkoutStep, setCheckoutStep] = useState('cart');
+  const [activeOrder, setActiveOrder] = useState(null);
+
+  // Pre-payment configuration state: Centralized USDT multi-network ID ('trc20' | 'erc20' | 'bep20' | 'sol')
+  const [selectedNetwork, setSelectedNetwork] = useState(DEFAULT_NETWORK_ID);
+  const [customerEmail, setCustomerEmail] = useState('');
   const [checkingOut, setCheckingOut] = useState(false);
-  const [checkoutComplete, setCheckoutComplete] = useState(false);
-  const [selectedPayment, setSelectedPayment] = useState('BTC');
+  const [checkoutError, setCheckoutError] = useState(null);
+  
+  // UI interaction states
+  const [copied, setCopied] = useState(false);
+  const [addedItemIds, setAddedItemIds] = useState([]);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const [pollCount, setPollCount] = useState(0);
+
+  const pollingTimerRef = useRef(null);
+
+  // Restore existing active payment session on mount / refresh
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(ACTIVE_PAYMENT_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && (parsed.orderId || parsed.paymentId)) {
+          setActiveOrder(parsed);
+          if (['confirmed', 'finished', 'paid'].includes((parsed.status || '').toLowerCase())) {
+            setCheckoutStep('completed');
+          } else if (parsed.status === 'verifying') {
+            setCheckoutStep('verifying');
+          } else {
+            setCheckoutStep('awaiting_payment');
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to parse active payment from localStorage', e);
+    }
+  }, []);
+
+  // Backend Status Polling: Queries GET /api/checkout/status/:id
+  const checkBackendPaymentStatus = useCallback(async (order) => {
+    if (!order || (!order.orderId && !order.paymentId)) return;
+
+    try {
+      const checkId = order.orderId || order.paymentId;
+      const response = await fetch(`/api/checkout/status/${checkId}`);
+      if (!response.ok) return;
+
+      const resData = await response.json();
+      if (resData.success && resData.data) {
+        const { isConfirmed, status, txHash, fullNetworkLabel, currency } = resData.data;
+
+        if (isConfirmed || ['confirmed', 'finished', 'paid'].includes((status || '').toLowerCase())) {
+          // Real backend confirmation verified
+          const confirmedOrder = {
+            ...order,
+            status: 'confirmed',
+            txHash: txHash || order.txHash || null,
+            fullNetworkLabel: fullNetworkLabel || order.fullNetworkLabel || currency || order.currency,
+          };
+          setActiveOrder(confirmedOrder);
+          try {
+            localStorage.setItem(ACTIVE_PAYMENT_STORAGE_KEY, JSON.stringify(confirmedOrder));
+          } catch (e) {}
+          setCheckoutStep('completed');
+        }
+      }
+    } catch (err) {
+      console.warn('Payment status polling check failed:', err.message);
+    }
+  }, []);
+
+  // Polling loop for active payment & verification states
+  useEffect(() => {
+    if (!activeOrder || (checkoutStep !== 'awaiting_payment' && checkoutStep !== 'verifying')) {
+      if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
+      return;
+    }
+
+    // Immediate check
+    checkBackendPaymentStatus(activeOrder);
+
+    // Periodic poll every 3.5 seconds
+    pollingTimerRef.current = setInterval(() => {
+      setPollCount((prev) => prev + 1);
+      checkBackendPaymentStatus(activeOrder);
+    }, 3500);
+
+    return () => {
+      if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
+    };
+  }, [activeOrder, checkoutStep, checkBackendPaymentStatus]);
+
+  // Compute Frequently Bought Together recommendations (excluding items already in cart)
+  const suggestedProducts = useMemo(() => {
+    const cartIds = new Set(cart.map((item) => item.id));
+    return products
+      .filter((p) => !cartIds.has(p.id))
+      .slice(0, 3);
+  }, [cart]);
+
+  const activeNetworkConfig = useMemo(() => {
+    return getNetworkConfig(selectedNetwork) || USDT_NETWORKS[DEFAULT_NETWORK_ID];
+  }, [selectedNetwork]);
 
   if (!isCartOpen) return null;
 
-  const handleCheckoutSubmit = () => {
+  // 1. Authorize Payment -> Freezes Cart Snapshot and Transitions to 'awaiting_payment'
+  const handleAuthorizePayment = async (e) => {
+    if (e) e.preventDefault();
+    if (checkingOut) return; // Prevent double-clicks / rapid submission
+
+    if (!customerEmail || !customerEmail.includes('@')) {
+      setCheckoutError('Please enter a valid delivery email address.');
+      return;
+    }
+
+    if (cart.length === 0) {
+      setCheckoutError('Your cart is empty.');
+      return;
+    }
+
     setCheckingOut(true);
-    setTimeout(() => {
+    setCheckoutError(null);
+
+    // Freeze the current cart snapshot
+    const cartSnapshot = cart.map((item) => ({
+      id: item.id,
+      title: item.title,
+      price: item.price,
+      quantity: item.quantity || 1,
+      platform: item.platform || 'geelark',
+    }));
+
+    try {
+      const response = await fetch('/api/checkout/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: customerEmail,
+          network: selectedNetwork,
+          payment_network: selectedNetwork,
+          cart: cartSnapshot,
+        }),
+      });
+
+      const resData = await response.json();
+      if (resData.success && resData.data) {
+        // Construct frozen order snapshot determined by backend
+        const frozenOrder = {
+          orderId: resData.data.orderId,
+          paymentId: resData.data.paymentId,
+          payAddress: resData.data.payAddress,
+          payAmountCrypto: resData.data.payAmountCrypto,
+          currency: resData.data.currency,
+          network: resData.data.network,
+          networkLabel: resData.data.networkLabel,
+          blockchain: resData.data.blockchain,
+          fullNetworkLabel: resData.data.fullNetworkLabel,
+          payCurrencyTicker: resData.data.payCurrencyTicker,
+          qrCodeUrl: resData.data.qrCodeUrl,
+          totalUsd: resData.data.totalUsd || cartTotal,
+          email: customerEmail,
+          items: cartSnapshot,
+          status: 'awaiting_payment',
+          warning: resData.data.warning,
+          createdAt: Date.now(),
+        };
+
+        // Persist frozen order
+        setActiveOrder(frozenOrder);
+        try {
+          localStorage.setItem(ACTIVE_PAYMENT_STORAGE_KEY, JSON.stringify(frozenOrder));
+        } catch (storageErr) {
+          console.warn('localStorage write failed', storageErr);
+        }
+
+        // Clear editable cart to prevent backdoor modifications
+        clearCart();
+
+        // Lock & transition to dedicated awaiting payment screen
+        setCheckoutStep('awaiting_payment');
+      } else {
+        setCheckoutError(resData.error || 'Failed to initialize payment invoice.');
+      }
+    } catch (err) {
+      setCheckoutError('Network error connecting to payment gateway.');
+    } finally {
       setCheckingOut(false);
-      setCheckoutComplete(true);
-    }, 2000);
+    }
   };
 
+  // 2. User clicks "I've sent payment" -> Transitions to 'verifying' (NEVER 'completed')
+  const handleUserReportedPayment = () => {
+    if (!activeOrder) return;
+    const verifyingOrder = { ...activeOrder, status: 'verifying' };
+    setActiveOrder(verifyingOrder);
+    try {
+      localStorage.setItem(ACTIVE_PAYMENT_STORAGE_KEY, JSON.stringify(verifyingOrder));
+    } catch (e) {}
+    setCheckoutStep('verifying');
+    // Trigger immediate status check
+    checkBackendPaymentStatus(verifyingOrder);
+  };
+
+  const handleAddSuggestion = (product) => {
+    if (checkoutStep !== 'cart') return; // Guard: Only allow adding during pre-payment cart
+    addToCart(product);
+    setAddedItemIds((prev) => [...prev, product.id]);
+    setTimeout(() => {
+      setAddedItemIds((prev) => prev.filter((id) => id !== product.id));
+    }, 1500);
+  };
+
+  const copyToClipboard = (text) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  // Finish and return to marketplace (clears payment session)
+  const handleFinishAndReturn = () => {
+    try {
+      localStorage.removeItem(ACTIVE_PAYMENT_STORAGE_KEY);
+    } catch (e) {}
+    setActiveOrder(null);
+    setCheckoutStep('cart');
+    setCheckoutError(null);
+    clearCart();
+    closeCart();
+  };
+
+  // Browse workflows navigation
+  const handleBrowseWorkflows = () => {
+    closeCart();
+    setTimeout(() => {
+      document.getElementById('catalog')?.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
+  };
+
+  // Close button handler with safety check for active payment
+  const handleHeaderClose = () => {
+    if (checkoutStep === 'awaiting_payment' || checkoutStep === 'verifying') {
+      setShowLeaveConfirm(true);
+    } else {
+      closeCart();
+    }
+  };
+
+  const handleConfirmLeave = () => {
+    setShowLeaveConfirm(false);
+    closeCart();
+  };
+
+  const handleCancelLeave = () => {
+    setShowLeaveConfirm(false);
+  };
+
+  const handleCancelActivePayment = () => {
+    try {
+      localStorage.removeItem(ACTIVE_PAYMENT_STORAGE_KEY);
+    } catch (e) {}
+    setActiveOrder(null);
+    setCheckoutStep('cart');
+    setShowLeaveConfirm(false);
+  };
+
+  const handlePrintReceipt = () => {
+    window.print();
+  };
+
+  const isCartEmpty = checkoutStep === 'cart' && cart.length === 0;
+
   return (
-    <div className={`cart-drawer-overlay ${isCartOpen ? 'open' : ''}`} onClick={closeCart}>
-      <div className="cart-drawer" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div className="cart-header">
-          <h2 className="cart-title">
-            Your Cart
-            <span className="cart-count-badge">{cart.length}</span>
-          </h2>
-          <button className="close-btn" onClick={closeCart}>✕</button>
+    <div className={`checkout-modal-overlay ${isCartOpen ? 'open' : ''}`} onClick={handleHeaderClose}>
+      <div
+        className={`checkout-modal-container ${
+          checkoutStep !== 'cart'
+            ? 'payment-focused-mode'
+            : isCartEmpty
+            ? 'empty-cart-mode'
+            : ''
+        }`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* ============================================================ */}
+        {/* 1. HEADER (Adapts to current checkout stage) */}
+        {/* ============================================================ */}
+        <div className="checkout-modal-header">
+          <div className="header-brand-lockup">
+            <span className="brand-mark-box">GF</span>
+            <div className="brand-title-wrap">
+              <span className="brand-title">GeeLark Flows</span>
+              <span className="brand-subtitle">
+                {checkoutStep === 'cart'
+                  ? 'System checkout & order authorization'
+                  : `Order #${activeOrder?.orderId || 'PENDING'}`}
+              </span>
+            </div>
+          </div>
+
+          <div className="header-actions-wrap">
+            {checkoutStep === 'cart' && (
+              <span className="header-cart-summary">
+                {cart.length > 0
+                  ? `${cart.length} ${cart.length === 1 ? 'item' : 'items'} · $${cartTotal.toFixed(2)}`
+                  : '0 items'}
+              </span>
+            )}
+            {checkoutStep === 'awaiting_payment' && (
+              <span className="header-locked-badge">Locked transaction</span>
+            )}
+            {checkoutStep === 'verifying' && (
+              <span className="header-verifying-badge">
+                <span className="pulse-mini-dot" /> Verifying on-chain
+              </span>
+            )}
+            <button className="checkout-close-btn" onClick={handleHeaderClose} aria-label="Close checkout">
+              ✕
+            </button>
+          </div>
         </div>
 
-        {/* Body */}
-        <div className="cart-body">
-          {checkoutComplete ? (
-            <div className="empty-cart">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-              <h3>Payment Authorized</h3>
-              <p>Your digital assets and workflows are being provisioned.</p>
-              <button className="checkout-btn" onClick={() => { setCheckoutComplete(false); closeCart(); }}>
-                Return to Marketplace
-              </button>
-            </div>
-          ) : cart.length === 0 ? (
-            <div className="empty-cart">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
-              <h3>Your cart is empty</h3>
-              <p>Browse the marketplace to find high-quality assets.</p>
-            </div>
-          ) : (
-            cart.map((item) => (
-              <div key={item.id} className="cart-item">
-                <div className="item-visual">{item.platform.substring(0,2).toUpperCase()}</div>
-                <div className="item-details">
-                  <span className="item-title">{item.title}</span>
-                  <span className="item-type">{item.type} • {item.platform}</span>
-                  <div className="item-price-row">
-                    <span className="item-price">${(item.price * item.quantity).toFixed(2)}</span>
-                    <button className="remove-btn" onClick={() => removeFromCart(item.id)}>Remove</button>
+        {/* ============================================================ */}
+        {/* 2. BODY CONTENT (4 Explicit States) */}
+        {/* ============================================================ */}
+
+        {/* ------------------------------------------------------------ */}
+        {/* STATE 1: CART & CONFIGURE (Pre-Payment Editable State) */}
+        {/* ------------------------------------------------------------ */}
+        {checkoutStep === 'cart' && (
+          <div className="checkout-modal-body">
+            {/* Left: Selected Flows OR Designed Empty State */}
+            <div className="checkout-column left-column">
+              <div className="column-header">
+                <div className="column-header-left">
+                  <h2 className="column-title">Your flows</h2>
+                  {cart.length > 0 && <span className="column-count">{cart.length}</span>}
+                </div>
+                {cart.length > 0 && (
+                  <button
+                    type="button"
+                    className="btn-clear-cart"
+                    onClick={clearCart}
+                    title="Remove all items from cart"
+                  >
+                    Clear cart
+                  </button>
+                )}
+              </div>
+
+              {isCartEmpty ? (
+                /* Intentional Designed Empty State */
+                <div className="empty-cart-composition">
+                  <div className="empty-cart-icon-box">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="9" cy="21" r="1" />
+                      <circle cx="20" cy="21" r="1" />
+                      <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+                    </svg>
+                  </div>
+                  <h3 className="empty-cart-heading">Your cart is empty</h3>
+                  <p className="empty-cart-desc">
+                    Select reusable automation workflows from the catalog to build your setup.
+                  </p>
+                  <button
+                    type="button"
+                    className="empty-browse-btn"
+                    onClick={handleBrowseWorkflows}
+                  >
+                    <span>Browse workflow catalog</span>
+                    <span className="btn-arrow">↓</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="cart-content-wrapper">
+                  <div className="column-scroll-area">
+                    <div className="checkout-items-list">
+                      {cart.map((item) => (
+                        <div key={item.id} className="checkout-item-row">
+                          <span className="item-icon-square">
+                            {item.platform ? item.platform.slice(0, 2).toUpperCase() : 'GF'}
+                          </span>
+                          <div className="item-info">
+                            <div className="item-title-row">
+                              <h3 className="item-name">{item.title}</h3>
+                              <span className="item-price font-mono">${item.price}</span>
+                            </div>
+                            <div className="item-meta-row">
+                              <span className="item-desc">Reusable GeeLark flow</span>
+                              <button
+                                type="button"
+                                className="item-remove-btn"
+                                onClick={() => removeFromCart(item.id)}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Frequently Bought Together */}
+                    {suggestedProducts.length > 0 && (
+                      <div className="recommendations-section">
+                        <div className="recommendations-header">
+                          <h4 className="rec-title">Frequently bought together</h4>
+                          <span className="rec-subtitle">Popular pairings for your setup</span>
+                        </div>
+                        <div className="recommendations-list">
+                          {suggestedProducts.map((p) => {
+                            const isAdded = addedItemIds.includes(p.id);
+                            return (
+                              <div key={p.id} className="rec-item-row">
+                                <div className="rec-item-info">
+                                  <span className="rec-item-name">{p.title}</span>
+                                  <span className="rec-item-price font-mono">${p.price}.00</span>
+                                </div>
+                                <button
+                                  type="button"
+                                  className={`rec-add-btn ${isAdded ? 'added' : ''}`}
+                                  onClick={() => handleAddSuggestion(p)}
+                                  disabled={isAdded}
+                                >
+                                  {isAdded ? '✓ Added' : '+ Add'}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="column-summary-footer">
+                    <div className="summary-row">
+                      <span className="summary-label">Cart subtotal ({cart.length} {cart.length === 1 ? 'item' : 'items'})</span>
+                      <span className="summary-value font-mono">${cartTotal.toFixed(2)}</span>
+                    </div>
+                    <div className="summary-row main-total">
+                      <span className="summary-label">Total amount due</span>
+                      <span className="summary-value font-mono total-bold">${cartTotal.toFixed(2)} USD</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))
-          )}
-        </div>
+              )}
+            </div>
 
-        {/* Footer */}
-        {!checkoutComplete && cart.length > 0 && (
-          <div className="cart-footer">
-            <div className="crypto-indicators">
-              <button 
-                className={`crypto-badge ${selectedPayment === 'BTC' ? 'selected' : ''}`}
-                onClick={() => setSelectedPayment('BTC')}
+            {/* Right: Payment Method & Customer Details */}
+            <div className="checkout-column right-column">
+              <div className="column-header">
+                <h2 className="column-title">Payment</h2>
+                <span className="column-badge">Instant crypto delivery</span>
+              </div>
+
+              <div className="payment-content-wrapper">
+                {isCartEmpty ? (
+                  <div className="empty-payment-composition">
+                    <div className="empty-payment-icon-box">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="2" y="5" width="20" height="14" rx="2" />
+                        <line x1="2" y1="10" x2="22" y2="10" />
+                      </svg>
+                    </div>
+                    <h4 className="empty-payment-heading">Checkout unavailable</h4>
+                    <p className="empty-payment-desc">
+                      Add at least one workflow from the catalog to configure instant crypto checkout.
+                    </p>
+                    <div className="empty-payment-steps-preview">
+                      <div className="step-preview-item">
+                        <span className="step-num">1</span>
+                        <span>Select your reusable automation flow</span>
+                      </div>
+                      <div className="step-preview-item">
+                        <span className="step-num">2</span>
+                        <span>Choose preferred USDT network</span>
+                      </div>
+                      <div className="step-preview-item">
+                        <span className="step-num">3</span>
+                        <span>Receive package to your email</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <form className="payment-form" onSubmit={handleAuthorizePayment}>
+                    <div className="payment-form-fields">
+                      {/* Step 1: Customer Email */}
+                      <div className="form-group">
+                        <label className="form-label" htmlFor="checkout-email">
+                          Email address
+                        </label>
+                        <input
+                          id="checkout-email"
+                          type="email"
+                          required
+                          className="form-input"
+                          placeholder="name@example.com"
+                          value={customerEmail}
+                          onChange={(e) => setCustomerEmail(e.target.value)}
+                        />
+                        <span className="form-hint">
+                          Your digital automation workflow package will be delivered here.
+                        </span>
+                      </div>
+
+                      {/* Step 2: Payment Asset Header */}
+                      <div className="form-group">
+                        <label className="form-label">Payment asset</label>
+                        <div className="payment-asset-row">
+                          <div className="asset-pill-selected">
+                            <span className="asset-pill-symbol font-mono">₮</span>
+                            <div className="asset-pill-text">
+                              <span className="asset-pill-title">USDT</span>
+                              <span className="asset-pill-sub">Tether USD</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Step 3: Multi-Network USDT Selector (4 Options) */}
+                      <div className="form-group">
+                        <div className="form-label-row">
+                          <label className="form-label">USDT network</label>
+                          <span className="form-label-hint">Choose network to send USDT</span>
+                        </div>
+                        <div className="network-selector-grid">
+                          {USDT_NETWORKS_LIST.map((net) => {
+                            const isSelected = selectedNetwork === net.id;
+                            return (
+                              <button
+                                key={net.id}
+                                type="button"
+                                className={`network-option-card ${isSelected ? 'selected' : ''}`}
+                                onClick={() => setSelectedNetwork(net.id)}
+                              >
+                                <div className="net-card-header">
+                                  <span className="net-card-symbol font-mono">USDT</span>
+                                  <span className="net-card-badge font-mono">{net.shortLabel}</span>
+                                </div>
+                                <div className="net-card-chain">{net.chainLabel}</div>
+                                <div className="net-card-tag">{net.badge}</div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="network-helper-text">
+                          Choose the network you'll use to send USDT.
+                        </div>
+                      </div>
+
+                      {/* Total Review */}
+                      <div className="payment-total-box">
+                        <div className="payment-total-row">
+                          <span className="pay-total-label">Total</span>
+                          <span className="pay-total-val font-mono">${cartTotal.toFixed(2)} USD</span>
+                        </div>
+                        <span className="pay-total-sub">
+                          Payable in <strong>USDT ({activeNetworkConfig.shortLabel} · {activeNetworkConfig.chainLabel})</strong>
+                        </span>
+                      </div>
+
+                      {checkoutError && <div className="form-error-banner">{checkoutError}</div>}
+                    </div>
+
+                    <div className="column-action-footer">
+                      <button
+                        type="submit"
+                        className="btn-action btn-primary"
+                        disabled={checkingOut || cart.length === 0}
+                      >
+                        {checkingOut
+                          ? 'Generating invoice...'
+                          : `Authorize payment · $${cartTotal.toFixed(2)} →`}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------ */}
+        {/* STATE 2: AWAITING PAYMENT (QR Code, Locked Order Details) */}
+        {/* ------------------------------------------------------------ */}
+        {checkoutStep === 'awaiting_payment' && activeOrder && (
+          <div className="payment-dedicated-layout">
+            <div className="payment-dedicated-header">
+              <div className="payment-status-badge">
+                <span className="status-dot-pulse" />
+                <span>Awaiting payment</span>
+              </div>
+              <p className="payment-sub-instruction">Send the exact amount to the address below</p>
+            </div>
+
+            <div className="payment-dedicated-scroll">
+              {/* QR Scan Box */}
+              <div className="payment-qr-card">
+                <img
+                  src={activeOrder.qrCodeUrl}
+                  alt={`${activeOrder.currency} Payment QR Code`}
+                  className="payment-qr-image"
+                />
+              </div>
+
+              {/* Exact Amount Block (Immutable & Network-Aware) */}
+              <div className="payment-amount-hero">
+                <span className="amount-caption">Exact amount to send</span>
+                <div className="amount-crypto-val font-mono">
+                  ${activeOrder.totalUsd.toFixed(2)} USDT
+                </div>
+                <div className="amount-network-pill font-mono">
+                  {activeOrder.fullNetworkLabel || activeOrder.currency}
+                </div>
+              </div>
+
+              {/* Network Safety Warning */}
+              <div className="payment-network-warning-box">
+                <span className="warning-icon">⚠</span>
+                <span>Send USDT on the <strong>{activeOrder.fullNetworkLabel || activeOrder.currency}</strong> network only.</span>
+              </div>
+
+              {/* Read-Only Fulfillment Email */}
+              <div className="payment-readonly-info">
+                <span className="readonly-label">Delivery email</span>
+                <span className="readonly-val font-mono">{activeOrder.email}</span>
+              </div>
+
+              {/* Receiving Wallet Address Console */}
+              <div className="payment-wallet-box">
+                <span className="readonly-label">
+                  Receiving wallet address ({activeOrder.fullNetworkLabel || activeOrder.currency})
+                </span>
+                <div className="wallet-address-bar">
+                  <span className="wallet-string font-mono">{activeOrder.payAddress}</span>
+                  <button
+                    type="button"
+                    className="btn-wallet-copy"
+                    onClick={() => copyToClipboard(activeOrder.payAddress)}
+                  >
+                    {copied ? 'Copied!' : 'Copy'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Order Metadata */}
+              <div className="payment-meta-row">
+                <span>Order: <strong className="font-mono">{activeOrder.orderId}</strong></span>
+                <span>Invoice: <strong className="font-mono">{activeOrder.paymentId}</strong></span>
+              </div>
+            </div>
+
+            {/* Action Footer */}
+            <div className="payment-dedicated-footer">
+              <button
+                type="button"
+                className="btn-action btn-primary"
+                onClick={handleUserReportedPayment}
               >
-                <svg fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>
-                BTC
+                I've sent payment →
               </button>
-              <button 
-                className={`crypto-badge ${selectedPayment === 'ETH' ? 'selected' : ''}`}
-                onClick={() => setSelectedPayment('ETH')}
+              <button
+                type="button"
+                className="btn-action btn-ghost"
+                onClick={() => setShowLeaveConfirm(true)}
               >
-                <svg fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L2 22h20L12 2zm0 4.1L18.4 18H5.6L12 6.1z"/></svg>
-                ETH
-              </button>
-              <button 
-                className={`crypto-badge ${selectedPayment === 'USDT' ? 'selected' : ''}`}
-                onClick={() => setSelectedPayment('USDT')}
-              >
-                <svg fill="currentColor" viewBox="0 0 24 24"><path d="M12 2c5.52 2 10 6.48 10 12s-4.48 10-10 10S2 19.52 2 14c0-5.52 4.48-10 10-12zm0 2.22A8.006 8.006 0 004.22 12 8.006 8.006 0 0012 19.78 8.006 8.006 0 0019.78 12 8.006 8.006 0 0012 4.22z"/></svg>
-                USDT
+                Leave payment session
               </button>
             </div>
-            <div className="summary-row total">
-              <span>Total Secured Amount</span>
-              <span className="price-val">${cartTotal.toFixed(2)}</span>
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------ */}
+        {/* STATE 3: VERIFYING PAYMENT (Pending On-Chain Confirmation) */}
+        {/* ------------------------------------------------------------ */}
+        {checkoutStep === 'verifying' && activeOrder && (
+          <div className="payment-dedicated-layout">
+            <div className="verifying-hero-header">
+              <div className="verifying-radar-icon">
+                <span className="radar-ring" />
+                <span className="radar-core">◌</span>
+              </div>
+              <h2 className="verifying-title">Verifying payment</h2>
+              <p className="verifying-subtitle">We're verifying your payment on the network.</p>
             </div>
-            <button className="checkout-btn" onClick={handleCheckoutSubmit} disabled={checkingOut}>
-              {checkingOut ? 'Processing...' : 'Authorize Purchase'}
-            </button>
+
+            <div className="payment-dedicated-scroll">
+              {/* Payment Spec Box */}
+              <div className="verifying-spec-card">
+                <div className="verifying-amount-line">
+                  <span className="verifying-amount-val font-mono">
+                    ${activeOrder.totalUsd.toFixed(2)} USDT
+                  </span>
+                  <span className="verifying-network-pill font-mono">
+                    {activeOrder.fullNetworkLabel || activeOrder.currency}
+                  </span>
+                </div>
+                <div className="verifying-wallet-line">
+                  <span className="v-label">Wallet:</span>
+                  <span className="v-address font-mono">{activeOrder.payAddress}</span>
+                </div>
+              </div>
+
+              {/* Status Explanation Card */}
+              <div className="verifying-notice-card">
+                <p className="notice-main">We've received your payment submission.</p>
+                <p className="notice-sub">
+                  Once the transaction is confirmed on the blockchain, we'll process your order and deliver your workflow package to your registered email:
+                </p>
+                <div className="verifying-email-box">
+                  <span className="email-text font-mono">{activeOrder.email}</span>
+                </div>
+              </div>
+
+              {/* Order IDs */}
+              <div className="verifying-meta-table">
+                <div className="v-meta-row">
+                  <span>Order:</span>
+                  <strong className="font-mono">{activeOrder.orderId}</strong>
+                </div>
+                <div className="v-meta-row">
+                  <span>Invoice:</span>
+                  <strong className="font-mono">{activeOrder.paymentId}</strong>
+                </div>
+                <div className="v-meta-row">
+                  <span>Network:</span>
+                  <span className="font-mono">{activeOrder.fullNetworkLabel || activeOrder.currency}</span>
+                </div>
+                <div className="v-meta-row">
+                  <span>Status:</span>
+                  <span className="v-status-live font-mono">Awaiting confirmations...</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="payment-dedicated-footer">
+              <button
+                type="button"
+                className="btn-action btn-secondary"
+                onClick={handlePrintReceipt}
+              >
+                View / Print transaction receipt
+              </button>
+              <button
+                type="button"
+                className="btn-action btn-ghost"
+                onClick={closeCart}
+              >
+                Return to marketplace (verification stays active)
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------ */}
+        {/* STATE 4: PAYMENT CONFIRMED & COMPLETED (Backend Verified ONLY) */}
+        {/* ------------------------------------------------------------ */}
+        {checkoutStep === 'completed' && activeOrder && (
+          <div className="payment-dedicated-layout">
+            <div className="payment-dedicated-header">
+              <div className="receipt-success-badge">
+                <span className="receipt-check-glyph">✓</span>
+              </div>
+              <h2 className="receipt-success-title">Payment complete</h2>
+              <p className="payment-sub-instruction">Thank you. Order #{activeOrder.orderId}</p>
+            </div>
+
+            <div className="payment-dedicated-scroll">
+              <div className="receipt-delivery-card">
+                <strong>Digital assets dispatched</strong>
+                <p>
+                  Your cryptocurrency payment has been verified on the blockchain. Your GeeLark automation package has been emailed to{' '}
+                  <span className="email-highlight font-mono">{activeOrder.email}</span>.
+                </p>
+              </div>
+
+              <div className="receipt-summary-table">
+                <div className="summary-row">
+                  <span className="row-k">Order ID</span>
+                  <span className="row-v font-mono">{activeOrder.orderId}</span>
+                </div>
+                <div className="summary-row">
+                  <span className="row-k">Invoice ID</span>
+                  <span className="row-v font-mono">{activeOrder.paymentId}</span>
+                </div>
+                {activeOrder.txHash && (
+                  <div className="summary-row">
+                    <span className="row-k">Tx Hash</span>
+                    <span className="row-v font-mono">{activeOrder.txHash.substring(0, 16)}...</span>
+                  </div>
+                )}
+                <div className="summary-row">
+                  <span className="row-k">Payment method</span>
+                  <span className="row-v">USDT ({activeOrder.fullNetworkLabel || activeOrder.currency})</span>
+                </div>
+                <div className="summary-row">
+                  <span className="row-k">Amount paid</span>
+                  <span className="row-v font-mono">${activeOrder.totalUsd.toFixed(2)} USD</span>
+                </div>
+
+                {activeOrder.items && activeOrder.items.length > 0 && (
+                  <div className="receipt-purchased-items">
+                    <span className="purchased-items-title">Purchased workflows:</span>
+                    {activeOrder.items.map((item, idx) => (
+                      <div key={idx} className="purchased-item-line">
+                        <span>{item.title}</span>
+                        <span className="font-mono">${(item.price * (item.quantity || 1)).toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="payment-dedicated-footer">
+              <button
+                type="button"
+                className="btn-action btn-secondary"
+                onClick={handlePrintReceipt}
+              >
+                Print receipt
+              </button>
+              <button
+                type="button"
+                className="btn-action btn-primary"
+                onClick={handleFinishAndReturn}
+              >
+                Return to marketplace →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================ */}
+        {/* 3. LEAVE PAYMENT CONFIRMATION DIALOG */}
+        {/* ============================================================ */}
+        {showLeaveConfirm && (
+          <div className="leave-modal-dialog-overlay" onClick={handleCancelLeave}>
+            <div className="leave-modal-dialog" onClick={(e) => e.stopPropagation()}>
+              <h3>Leave payment?</h3>
+              <p>
+                Your payment for Order <strong>#{activeOrder?.orderId}</strong> is awaiting confirmation on the blockchain.
+                You can safely resume this payment at any time.
+              </p>
+              <div className="leave-dialog-actions">
+                <button type="button" className="dialog-btn dialog-stay" onClick={handleCancelLeave}>
+                  Stay on payment
+                </button>
+                <button type="button" className="dialog-btn dialog-leave" onClick={handleConfirmLeave}>
+                  Close window
+                </button>
+                <button type="button" className="dialog-btn dialog-cancel-order" onClick={handleCancelActivePayment}>
+                  Cancel order & restart
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

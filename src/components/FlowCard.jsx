@@ -3,10 +3,20 @@ import { platforms } from '../data/products';
 import './FlowCard.css';
 
 export default function FlowCard({ product, onViewDetails }) {
-  const { addToCart, lastAddedId } = useCart();
+  const { cart, addToCartWithAnimation, lastAddedId } = useCart();
   const platform = platforms.find((item) => item.id === product.platform);
-  const isAdded = lastAddedId === product.id;
+  const isInCart = cart.some((item) => item.id === product.id);
+  const isJustAdded = lastAddedId === product.id;
   const { details } = product;
+
+  const handleGetFlowClick = (event) => {
+    event.stopPropagation();
+    if (isInCart) {
+      openCart(); // If already in cart, simply open cart without replaying any animation!
+      return;
+    }
+    addToCartWithAnimation(product, event.currentTarget);
+  };
 
   return (
     <article
@@ -86,13 +96,10 @@ export default function FlowCard({ product, onViewDetails }) {
         </a>
         <button
           type="button"
-          className="btn-primary"
-          onClick={(event) => {
-            event.stopPropagation();
-            addToCart(product);
-          }}
+          className={`btn-primary ${isInCart ? 'in-cart' : ''}`}
+          onClick={handleGetFlowClick}
         >
-          {isAdded ? 'Added ✓' : 'Get this flow'}
+          {isJustAdded ? 'Added ✓' : isInCart ? 'In cart ✓' : 'Get this flow'}
         </button>
       </div>
     </article>

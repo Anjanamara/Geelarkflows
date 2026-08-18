@@ -291,8 +291,20 @@
   font-size: 11px;
 }
 
+.card-footer .btn-primary.in-cart {
+  background: #181B19;
+  color: var(--accent-lime);
+  border: 1px solid rgba(167, 255, 79, 0.4);
+}
+
+.card-footer .btn-primary.in-cart:hover {
+  background: #202422;
+  border-color: var(--accent-lime);
+}
+
 @media (max-width: 440px) {
   .flow-features {
     grid-template-columns: 1fr;
   }
 }
+

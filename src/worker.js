@@ -432,104 +432,111 @@ app.post('/webhooks/crypto', async (c) => {
     console.error('Webhook processing error:', err);
     return c.json({ success: false, error: err.message }, 500);
   }
-});
-
-// GET /api/checkout/status/:id (Queries by payment_id or order_id)
+}// GET /api/checkout/status/:id (Queries by payment_id or order_id)
 app.get('/checkout/status/:id', async (c) => {
-  const id = c.req.param('id');
-  let currentStatus = 'waiting';
-  let txHash = null;
-  let orderStatus = 'pending';
-  let rawCurrency = 'USDT (TRC-20)';
-  let payAddress = '';
-  let payAmount = 0;
-  let orderId = id;
-  let paymentId = id;
+  try {
+    const id = c.req.param('id');
+    let currentStatus = 'waiting';
+    let txHash = null;
+    let orderStatus = 'pending';
+    let rawCurrency = 'USDT (TRC-20)';
+    let payAddress = '';
+    let payAmount = 0;
+    let orderId = id;
+    let paymentId = id;
+    let isConfirmed = false;
 
-  if (c.env && c.env.DB) {
-    try {
-      const record = await c.env.DB.prepare(
-        'SELECT id, order_id, currency, pay_address, pay_amount_crypto, status, tx_hash FROM crypto_payments WHERE id = ? OR order_id = ?'
-      ).bind(id, id).first();
-      if (record) {
-        currentStatus = record.status || 'waiting';
-        txHash = record.tx_hash || null;
-        rawCurrency = record.currency || 'USDT (TRC-20)';
-        payAddress = record.pay_address || '';
-        payAmount = record.pay_amount_crypto || 0;
-        paymentId = record.id;
-        orderId = record.order_id;
-      }
-      const orderRec = await c.env.DB.prepare(
-        'SELECT status, total_usd FROM orders WHERE id = ?'
-      ).bind(orderId).first();
-      if (orderRec) {
-        orderStatus = orderRec.status || 'pending';
-        if (!payAmount && orderRec.total_usd) {
-          payAmount = orderRec.total_usd;
+    if (c.env && c.env.DB) {
+      try {
+        const record = await c.env.DB.prepare(
+          'SELECT id, order_id, currency, pay_address, pay_amount_crypto, status, tx_hash FROM crypto_payments WHERE id = ? OR order_id = ?'
+        ).bind(id, id).first();
+        if (record) {
+          currentStatus = record.status || 'waiting';
+          txHash = record.tx_hash || null;
+          rawCurrency = record.currency || 'USDT (TRC-20)';
+          payAddress = record.pay_address || '';
+          payAmount = record.pay_amount_crypto || 0;
+          paymentId = record.id;
+          orderId = record.order_id;
         }
-      }
-    } catch (dbErr) {
-      console.warn('D1 Status fetch notice:', dbErr.message);
-    }
-  }
-
-  // Direct Live NOWPayments Gateway Query Fallback
-  const apiKey = c.env?.NOWPAYMENTS_API_KEY || c.env?.CRYPTO_GATEWAY_API_KEY;
-  if (apiKey && paymentId && !isConfirmed && currentStatus === 'waiting') {
-    try {
-      const nowPayCheck = await fetch(`https://api.nowpayments.io/v1/payment/${paymentId}`, {
-        headers: { 'x-api-key': apiKey }
-      });
-      const nowPayStatusData = await nowPayCheck.json();
-      if (nowPayStatusData && nowPayStatusData.payment_status) {
-        const liveStatus = String(nowPayStatusData.payment_status).toLowerCase();
-        if (['confirmed', 'finished', 'paid'].includes(liveStatus)) {
-          currentStatus = liveStatus;
-          txHash = nowPayStatusData.outcome_tx_hash || nowPayStatusData.txid || txHash;
-          orderStatus = 'paid';
-
-          if (c.env && c.env.DB) {
-            await c.env.DB.prepare(
-              'UPDATE crypto_payments SET status = ?, tx_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? OR order_id = ?'
-            ).bind(currentStatus, txHash, paymentId, orderId).run();
-            await c.env.DB.prepare(
-              'UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-            ).bind('paid', orderId).run();
+        const orderRec = await c.env.DB.prepare(
+          'SELECT status, total_usd FROM orders WHERE id = ?'
+        ).bind(orderId).first();
+        if (orderRec) {
+          orderStatus = orderRec.status || 'pending';
+          if (!payAmount && orderRec.total_usd) {
+            payAmount = orderRec.total_usd;
           }
         }
+      } catch (dbErr) {
+        console.warn('D1 Status fetch notice:', dbErr.message);
       }
-    } catch (pollErr) {
-      console.warn('Direct NOWPayments status sync notice:', pollErr.message);
     }
+
+    isConfirmed = ['confirmed', 'finished', 'paid'].includes((currentStatus || '').toLowerCase()) || orderStatus === 'paid';
+
+    // Direct Live NOWPayments Gateway Query Fallback
+    const apiKey = c.env?.NOWPAYMENTS_API_KEY || c.env?.CRYPTO_GATEWAY_API_KEY;
+    const isNumericPaymentId = paymentId && /^\d+$/.test(paymentId);
+    if (apiKey && isNumericPaymentId && !isConfirmed && currentStatus === 'waiting') {
+      try {
+        const nowPayCheck = await fetch(`https://api.nowpayments.io/v1/payment/${paymentId}`, {
+          headers: { 'x-api-key': apiKey }
+        });
+        const nowPayStatusData = await nowPayCheck.json();
+        if (nowPayStatusData && nowPayStatusData.payment_status) {
+          const liveStatus = String(nowPayStatusData.payment_status).toLowerCase();
+          if (['confirmed', 'finished', 'paid'].includes(liveStatus)) {
+            currentStatus = liveStatus;
+            txHash = nowPayStatusData.outcome_tx_hash || nowPayStatusData.txid || txHash;
+            orderStatus = 'paid';
+            isConfirmed = true;
+
+            if (c.env && c.env.DB) {
+              await c.env.DB.prepare(
+                'UPDATE crypto_payments SET status = ?, tx_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? OR order_id = ?'
+              ).bind(currentStatus, txHash, paymentId, orderId).run();
+              await c.env.DB.prepare(
+                'UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+              ).bind('paid', orderId).run();
+            }
+          }
+        }
+      } catch (pollErr) {
+        console.warn('Direct NOWPayments status sync notice:', pollErr.message);
+      }
+    }
+
+    const resolvedNetwork = resolvePaymentNetwork(rawCurrency) || SUPPORTED_USDT_NETWORKS['trc20'];
+
+    return c.json({
+      success: true,
+      data: {
+        id,
+        orderId,
+        paymentId,
+        status: currentStatus,
+        orderStatus,
+        isConfirmed,
+        txHash,
+        asset: 'USDT',
+        network: resolvedNetwork.id,
+        networkLabel: resolvedNetwork.network,
+        blockchain: resolvedNetwork.blockchain,
+        fullNetworkLabel: resolvedNetwork.full_label,
+        currency: resolvedNetwork.display_currency,
+        payCurrency: resolvedNetwork.nowpayments_currency.toUpperCase(),
+        payAmount,
+        payAddress,
+        confirmations: isConfirmed ? 2 : 0,
+        requiredConfirmations: 2,
+      },
+    });
+  } catch (routeErr) {
+    console.error('Status route unhandled error:', routeErr);
+    return c.json({ success: false, error: routeErr.message }, 500);
   }
-
-  const resolvedNetwork = resolvePaymentNetwork(rawCurrency) || SUPPORTED_USDT_NETWORKS['trc20'];
-  const finalConfirmed = ['confirmed', 'finished', 'paid'].includes((currentStatus || '').toLowerCase()) || orderStatus === 'paid';
-
-  return c.json({
-    success: true,
-    data: {
-      id,
-      orderId,
-      paymentId,
-      status: currentStatus,
-      orderStatus,
-      isConfirmed: finalConfirmed,
-      txHash,
-      asset: 'USDT',
-      network: resolvedNetwork.id,
-      networkLabel: resolvedNetwork.network,
-      blockchain: resolvedNetwork.blockchain,
-      fullNetworkLabel: resolvedNetwork.full_label,
-      currency: resolvedNetwork.display_currency,
-      payCurrency: resolvedNetwork.nowpayments_currency.toUpperCase(),
-      payAmount,
-      payAddress,
-      confirmations: isConfirmed ? 2 : 0,
-      requiredConfirmations: 2,
-    },
-  });
 });
 
 export default app;

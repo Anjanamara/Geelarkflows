@@ -719,7 +719,7 @@ export default function CartDrawer() {
               <div className="verifying-notice-card">
                 <p className="notice-main">We've received your payment submission.</p>
                 <p className="notice-sub">
-                  Once the transaction is confirmed on the blockchain, we'll process your order and deliver your workflow package to your registered email:
+                  We will contact you on the mentioned email address within 24 hours for the delivery of your flow / automations:
                 </p>
                 <div className="verifying-email-box">
                   <span className="email-text font-mono">{activeOrder.email}</span>
@@ -781,10 +781,10 @@ export default function CartDrawer() {
 
             <div className="payment-dedicated-scroll">
               <div className="receipt-delivery-card">
-                <strong>Digital assets dispatched</strong>
+                <strong>Order confirmed & processing</strong>
                 <p>
-                  Your cryptocurrency payment has been verified on the blockchain. Your GeeLark automation package has been emailed to{' '}
-                  <span className="email-highlight font-mono">{activeOrder.email}</span>.
+                  Your cryptocurrency payment has been verified on the blockchain. We will contact you at{' '}
+                  <span className="email-highlight font-mono">{activeOrder.email}</span> within 24 hours for the delivery of your flow / automations.
                 </p>
               </div>
 

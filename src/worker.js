@@ -179,17 +179,33 @@ function generateSecureToken(byteLength = 32) {
 }
 
 /**
+ * Recursively sort object keys alphabetically for deterministic JSON canonicalization
+ */
+function sortObjectKeysRecursively(val) {
+  if (val === null || typeof val !== 'object' || Array.isArray(val)) {
+    return val;
+  }
+  const sorted = {};
+  const keys = Object.keys(val).sort();
+  for (const key of keys) {
+    sorted[key] = sortObjectKeysRecursively(val[key]);
+  }
+  return sorted;
+}
+
+/**
  * Web Crypto HMAC-SHA512 Verification for NOWPayments Webhooks
  */
 async function verifyNowPaymentsSignature(payload, headerSignature, secretKey) {
-  if (!headerSignature || !secretKey) return false;
+  if (!headerSignature || typeof headerSignature !== 'string' || !secretKey || typeof secretKey !== 'string') {
+    return false;
+  }
+  if (!payload || typeof payload !== 'object') {
+    return false;
+  }
 
   try {
-    const sortedKeys = Object.keys(payload).sort();
-    const sortedObj = {};
-    for (const key of sortedKeys) {
-      sortedObj[key] = payload[key];
-    }
+    const sortedObj = sortObjectKeysRecursively(payload);
     const dataString = JSON.stringify(sortedObj);
 
     const encoder = new TextEncoder();
@@ -207,9 +223,9 @@ async function verifyNowPaymentsSignature(payload, headerSignature, secretKey) {
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
 
-    return computedHex.toLowerCase() === headerSignature.toLowerCase();
+    return constantTimeCompare(computedHex.toLowerCase(), headerSignature.toLowerCase().trim());
   } catch (err) {
-    console.error('HMAC calculation error:', err);
+    console.error('NOWPayments HMAC calculation error:', err.message);
     return false;
   }
 }
@@ -218,7 +234,9 @@ async function verifyNowPaymentsSignature(payload, headerSignature, secretKey) {
  * Svix HMAC-SHA256 Signature Verification for Resend Inbound Webhooks
  */
 async function verifyResendWebhookSignature(rawBody, headers, secret) {
-  if (!secret) return true; // If no secret is configured, bypass check (e.g. testing)
+  if (!secret || typeof secret !== 'string' || !headers || typeof rawBody !== 'string') {
+    return false; // Fail closed
+  }
 
   const svixId = headers['svix-id'];
   const svixTimestamp = headers['svix-timestamp'];
@@ -228,8 +246,13 @@ async function verifyResendWebhookSignature(rawBody, headers, secret) {
     return false;
   }
 
-  // Enforce 300s timestamp tolerance
-  const timestampNum = parseInt(svixTimestamp, 10);
+  // Enforce integer-only epoch timestamp format and 300s tolerance window
+  const cleanTimestamp = String(svixTimestamp).trim();
+  if (!/^\d+$/.test(cleanTimestamp)) {
+    return false;
+  }
+
+  const timestampNum = parseInt(cleanTimestamp, 10);
   const nowSec = Math.floor(Date.now() / 1000);
   if (isNaN(timestampNum) || Math.abs(nowSec - timestampNum) > 300) {
     return false;
@@ -239,16 +262,20 @@ async function verifyResendWebhookSignature(rawBody, headers, secret) {
     let keyBytes;
     if (secret.startsWith('whsec_')) {
       const base64Key = secret.substring(6);
-      const binaryStr = atob(base64Key);
-      keyBytes = new Uint8Array(binaryStr.length);
-      for (let i = 0; i < binaryStr.length; i++) {
-        keyBytes[i] = binaryStr.charCodeAt(i);
+      try {
+        const binaryStr = atob(base64Key);
+        keyBytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) {
+          keyBytes[i] = binaryStr.charCodeAt(i);
+        }
+      } catch (b64Err) {
+        return false; // Malformed Base64 secret fails closed safely
       }
     } else {
       keyBytes = new TextEncoder().encode(secret);
     }
 
-    const toSign = `${svixId}.${svixTimestamp}.${rawBody}`;
+    const toSign = `${svixId}.${cleanTimestamp}.${rawBody}`;
     const cryptoKey = await crypto.subtle.importKey(
       'raw',
       keyBytes,
@@ -260,16 +287,19 @@ async function verifyResendWebhookSignature(rawBody, headers, secret) {
     const signatureBuffer = await crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(toSign));
     const computedBase64 = btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)));
 
-    const sigParts = svixSignature.split(' ');
+    const sigParts = svixSignature.split(' ').filter(Boolean);
     for (const part of sigParts) {
-      const [version, sig] = part.split(',');
+      const commaIdx = part.indexOf(',');
+      if (commaIdx === -1) continue;
+      const version = part.substring(0, commaIdx);
+      const sig = part.substring(commaIdx + 1);
       if (version === 'v1' && constantTimeCompare(sig, computedBase64)) {
         return true;
       }
     }
     return false;
   } catch (err) {
-    console.error('Svix signature error:', err);
+    console.error('Svix signature error:', err.message);
     return false;
   }
 }
@@ -1127,6 +1157,21 @@ app.post('/checkout/create', async (c) => {
 // POST /api/webhooks/crypto (NOWPayments IPN Callback)
 app.post('/webhooks/crypto', async (c) => {
   try {
+    // 1. Fail Closed: Server signing secret configuration check
+    const secretKey = c.env?.CRYPTO_WEBHOOK_SECRET || c.env?.NOWPAYMENTS_IPN_SECRET;
+    if (!secretKey || typeof secretKey !== 'string' || secretKey.trim().length === 0) {
+      console.error('NOWPayments webhook rejected: missing server signing configuration.');
+      return c.json({ success: false, error: 'Server webhook signing configuration missing.' }, 500);
+    }
+
+    // 2. Fail Closed: Signature header presence check
+    const headerSig = c.req.header('x-nowpayments-sig');
+    if (!headerSig || typeof headerSig !== 'string' || headerSig.trim().length === 0) {
+      console.warn('NOWPayments webhook rejected: missing signature header.');
+      return c.json({ success: false, error: 'Missing x-nowpayments-sig signature header.' }, 401);
+    }
+
+    // 3. Parse JSON Body
     const rawBody = await c.req.text();
     let payload;
     try {
@@ -1135,15 +1180,11 @@ app.post('/webhooks/crypto', async (c) => {
       return c.json({ success: false, error: 'Invalid JSON payload' }, 400);
     }
 
-    const secretKey = c.env?.CRYPTO_WEBHOOK_SECRET;
-    const headerSig = c.req.header('x-nowpayments-sig');
-
-    if (secretKey && headerSig) {
-      const isValid = await verifyNowPaymentsSignature(payload, headerSig, secretKey);
-      if (!isValid) {
-        console.error('HMAC Signature verification failed for IPN payload');
-        return c.json({ success: false, error: 'Invalid HMAC signature' }, 401);
-      }
+    // 4. Fail Closed: HMAC-SHA512 Signature verification
+    const isValid = await verifyNowPaymentsSignature(payload, headerSig.trim(), secretKey.trim());
+    if (!isValid) {
+      console.warn('NOWPayments webhook rejected: invalid signature.');
+      return c.json({ success: false, error: 'Invalid HMAC signature.' }, 401);
     }
 
     const {
@@ -1154,7 +1195,7 @@ app.post('/webhooks/crypto', async (c) => {
       txid,
     } = payload;
 
-    const normalizedStatus = String(payment_status).toLowerCase();
+    const normalizedStatus = String(payment_status || '').toLowerCase();
     const finalTxHash = outcome_tx_hash || txid || null;
 
     if (c.env && c.env.DB && order_id) {
@@ -1218,7 +1259,7 @@ app.post('/webhooks/crypto', async (c) => {
 
     return c.json({ success: true, status: 'processed' });
   } catch (err) {
-    console.error('Webhook processing error:', err);
+    console.error('NOWPayments webhook processing error:', err.message);
     return c.json({ success: false, error: err.message }, 500);
   }
 });
@@ -1226,20 +1267,35 @@ app.post('/webhooks/crypto', async (c) => {
 // POST /api/webhooks/resend (Resend Inbound Email Receiving)
 app.post('/webhooks/resend', async (c) => {
   try {
-    const rawBody = await c.req.text();
+    // 1. Fail Closed: Server signing secret configuration check
+    const webhookSecret = c.env?.RESEND_WEBHOOK_SECRET;
+    if (!webhookSecret || typeof webhookSecret !== 'string' || webhookSecret.trim().length === 0) {
+      console.error('Resend webhook rejected: missing server signing configuration.');
+      return c.json({ success: false, error: 'Server webhook signing configuration missing.' }, 500);
+    }
+
+    // 2. Fail Closed: Svix header presence check
+    const svixId = c.req.header('svix-id');
+    const svixTimestamp = c.req.header('svix-timestamp');
+    const svixSignature = c.req.header('svix-signature');
+
+    if (!svixId || !svixTimestamp || !svixSignature) {
+      console.warn('Resend webhook rejected: missing required Svix headers.');
+      return c.json({ success: false, error: 'Missing required Svix signature headers (svix-id, svix-timestamp, svix-signature).' }, 401);
+    }
+
     const svixHeaders = {
-      'svix-id': c.req.header('svix-id'),
-      'svix-timestamp': c.req.header('svix-timestamp'),
-      'svix-signature': c.req.header('svix-signature'),
+      'svix-id': svixId.trim(),
+      'svix-timestamp': svixTimestamp.trim(),
+      'svix-signature': svixSignature.trim(),
     };
 
-    const webhookSecret = c.env?.RESEND_WEBHOOK_SECRET;
-    if (webhookSecret) {
-      const isValid = await verifyResendWebhookSignature(rawBody, svixHeaders, webhookSecret);
-      if (!isValid) {
-        console.error('Svix signature verification failed for Resend webhook');
-        return c.json({ success: false, error: 'Invalid webhook signature' }, 401);
-      }
+    // 3. Fail Closed: Svix HMAC-SHA256 Signature verification
+    const rawBody = await c.req.text();
+    const isValid = await verifyResendWebhookSignature(rawBody, svixHeaders, webhookSecret.trim());
+    if (!isValid) {
+      console.warn('Resend webhook rejected: invalid Svix signature.');
+      return c.json({ success: false, error: 'Invalid Svix webhook signature.' }, 401);
     }
 
     let payload;

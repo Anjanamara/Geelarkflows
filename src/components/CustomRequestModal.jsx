@@ -11,6 +11,8 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
   
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [referenceId, setReferenceId] = useState(null);
+  const [errorMessage, setErrorMessage] = useState(null);
   const [focusedField, setFocusedField] = useState(null);
 
   // Update type if prop changes
@@ -27,6 +29,8 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
         setFormData({ name: '', email: '', type: requestType || 'flow', details: '' });
         setIsSuccess(false);
         setIsSubmitting(false);
+        setReferenceId(null);
+        setErrorMessage(null);
         setFocusedField(null);
       }, 300);
     }
@@ -40,22 +44,59 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
       ...prev,
       [name]: value
     }));
+    if (errorMessage) setErrorMessage(null);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
+    // Client-side quick validation
+    if (!formData.name.trim()) {
+      setErrorMessage('Full name is required.');
+      return;
+    }
+    if (!formData.email.trim() || !formData.email.includes('@')) {
+      setErrorMessage('Please provide a valid email address.');
+      return;
+    }
+    if (!formData.details.trim() || formData.details.trim().length < 10) {
+      setErrorMessage('Please provide at least 10 characters describing your requirements.');
+      return;
+    }
+
     setIsSubmitting(true);
-    
-    // Simulate API call
-    setTimeout(() => {
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch('/api/custom-request', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: formData.name.trim(),
+          email: formData.email.trim(),
+          type: formData.type || 'flow',
+          details: formData.details.trim(),
+        }),
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (response.ok && data?.success) {
+        setReferenceId(data.request_id || null);
+        setIsSuccess(true);
+      } else if (response.status === 429) {
+        setErrorMessage(data?.error || 'Too many requests submitted recently. Please wait a few minutes before trying again.');
+      } else {
+        setErrorMessage(data?.error || 'Unable to submit your request at this moment. Please try again or contact support@geelarkflows.com.');
+      }
+    } catch (err) {
+      setErrorMessage('Network connection error. Please check your connection and try again, or email support@geelarkflows.com directly.');
+    } finally {
       setIsSubmitting(false);
-      setIsSuccess(true);
-      
-      // Auto close after 3.5 seconds
-      setTimeout(() => {
-        if (isOpen) onClose();
-      }, 3500);
-    }, 1500);
+    }
   };
 
   const isFlow = formData.type === 'flow';
@@ -102,15 +143,40 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
                     <polyline points="22 4 12 14.01 9 11.01"></polyline>
                   </svg>
                 </div>
-                <h3>Request Initiated</h3>
-                <p>We've received your requirements. Our team will review the details and contact you shortly.</p>
+                <h3>Request Received</h3>
+                {referenceId && (
+                  <div className="request-reference-badge">
+                    <span>Reference ID:</span>
+                    <strong>{referenceId}</strong>
+                  </div>
+                )}
+                <p>
+                  Your requirements have been securely recorded. Our team will review your specifications and contact you at <strong>{formData.email}</strong>.
+                </p>
+                <div className="success-footer-note">
+                  <small>For direct inquiries or follow-ups: <a href="mailto:support@geelarkflows.com">support@geelarkflows.com</a></small>
+                </div>
+                <button type="button" className="success-done-btn" onClick={onClose}>
+                  Done
+                </button>
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="premium-form">
                 <div className="form-header">
                   <h3>Project Details</h3>
-                  <p>Fill out the form below to get started.</p>
+                  <p>Fill out the form below to submit your requirements.</p>
                 </div>
+
+                {errorMessage && (
+                  <div className="form-error-banner" role="alert">
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="12" y1="8" x2="12" y2="12"></line>
+                      <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                    <span>{errorMessage}</span>
+                  </div>
+                )}
 
                 <div className="form-row">
                   <div className={`input-group ${focusedField === 'name' || formData.name ? 'active' : ''}`}>
@@ -123,6 +189,8 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
                       onChange={handleChange}
                       onFocus={() => setFocusedField('name')}
                       onBlur={() => setFocusedField(null)}
+                      maxLength={100}
+                      disabled={isSubmitting}
                       required
                     />
                     <div className="input-line"></div>
@@ -138,6 +206,8 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
                       onChange={handleChange}
                       onFocus={() => setFocusedField('email')}
                       onBlur={() => setFocusedField(null)}
+                      maxLength={254}
+                      disabled={isSubmitting}
                       required
                     />
                     <div className="input-line"></div>
@@ -151,6 +221,7 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
                     name="type"
                     value={formData.type}
                     onChange={handleChange}
+                    disabled={isSubmitting}
                     required
                   >
                     <option value="flow">Custom Flow Creation</option>
@@ -170,13 +241,16 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
                     onChange={handleChange}
                     onFocus={() => setFocusedField('details')}
                     onBlur={() => setFocusedField(null)}
+                    maxLength={5000}
+                    disabled={isSubmitting}
+                    placeholder="Describe the platform, workflow steps, triggers, volume, and target outcomes..."
                     required
                   />
                   <div className="input-line"></div>
                 </div>
 
                 <button type="submit" className={`premium-submit-btn ${isSubmitting ? 'submitting' : ''}`} disabled={isSubmitting}>
-                  <span className="btn-text">{isSubmitting ? 'Processing...' : 'Submit Request'}</span>
+                  <span className="btn-text">{isSubmitting ? 'Submitting Request...' : 'Submit Request'}</span>
                   <span className="btn-icon">
                     <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="5" y1="12" x2="19" y2="12"></line>

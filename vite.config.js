@@ -270,6 +270,46 @@ export default defineConfig(({ mode }) => {
             // 1. PUBLIC CHECKOUT & STOREFRONT APIS
             // ----------------------------------------------------
 
+            // POST /api/custom-request
+            if (req.url?.startsWith('/api/custom-request') && req.method === 'POST') {
+              let bodyStr = '';
+              req.on('data', chunk => { bodyStr += chunk; });
+              req.on('end', async () => {
+                try {
+                  const body = JSON.parse(bodyStr || '{}');
+                  const { name, email, type, details } = body;
+
+                  if (!name || typeof name !== 'string' || !name.trim()) {
+                    return sendJson(400, { success: false, error: 'Full name is required' });
+                  }
+                  if (!email || typeof email !== 'string' || !email.includes('@')) {
+                    return sendJson(400, { success: false, error: 'Please provide a valid email address' });
+                  }
+                  const cleanType = String(type || 'flow').trim().toLowerCase();
+                  if (!['flow', 'consulting'].includes(cleanType)) {
+                    return sendJson(400, { success: false, error: "Service type must be 'flow' or 'consulting'" });
+                  }
+                  if (!details || typeof details !== 'string' || details.trim().length < 10) {
+                    return sendJson(400, { success: false, error: 'Please provide at least 10 characters describing your project requirements' });
+                  }
+                  if (details.trim().length > 5000) {
+                    return sendJson(400, { success: false, error: 'Project requirements must not exceed 5000 characters' });
+                  }
+
+                  const requestId = 'req_' + Math.random().toString(36).substring(2, 10);
+                  return sendJson(200, {
+                    success: true,
+                    request_id: requestId,
+                    customer_email: email.trim().toLowerCase(),
+                    message: 'Your custom automation request has been received.',
+                  });
+                } catch (err) {
+                  return sendJson(500, { success: false, error: err.message });
+                }
+              });
+              return;
+            }
+
             // POST /api/checkout/create
             if (req.url?.startsWith('/api/checkout/create') && req.method === 'POST') {
               let bodyStr = '';

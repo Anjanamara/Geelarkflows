@@ -778,6 +778,96 @@ async function sendFulfillmentEmail({ resendApiKey, customerEmail, orderId, netw
   return resData;
 }
 
+/**
+ * Send Internal Notification for New Custom Automation Request via Resend API (Outbound)
+ */
+async function sendCustomRequestNotificationEmail({
+  resendApiKey,
+  requestId,
+  name,
+  email,
+  requestType,
+  details,
+}) {
+  if (!resendApiKey) {
+    console.warn('RESEND_API_KEY secret is missing. Skipping internal email notification.');
+    return null;
+  }
+
+  const isFlow = requestType === 'flow';
+  const typeLabel = isFlow ? 'Custom Flow Creation' : 'Consulting & Strategy';
+  const fromEmail = 'GeeLark Flows <noreply@geelarkflows.com>';
+  const toEmail = 'support@geelarkflows.com';
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #0c0f0d; color: #f1f3f1; padding: 32px 28px; border-radius: 8px; border: 1px solid #222924;">
+      <div style="margin-bottom: 20px;">
+        <span style="background: #a7ff4f; color: #000; font-weight: 800; font-size: 11px; padding: 3px 6px; border-radius: 4px; font-family: monospace;">GF LEAD</span>
+        <span style="font-size: 14px; font-weight: 700; color: #f1f3f1; letter-spacing: 0.5px; margin-left: 6px;">NEW CUSTOM REQUEST</span>
+      </div>
+
+      <h2 style="color: #ffffff; margin-top: 0; font-size: 20px; font-weight: 700; border-bottom: 1px solid #1e2420; padding-bottom: 14px;">
+        ${escapeHtml(typeLabel)} — Ref #${escapeHtml(requestId)}
+      </h2>
+
+      <div style="background: #141815; padding: 18px; border-radius: 6px; margin: 20px 0; border: 1px solid #232a25;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px; color: #c0c6c2;">
+          <tr>
+            <td style="padding: 4px 0; color: #828c85; font-family: monospace;">Reference ID:</td>
+            <td style="padding: 4px 0; text-align: right; font-family: monospace; font-weight: 700; color: #a7ff4f;">${escapeHtml(requestId)}</td>
+          </tr>
+          <tr>
+            <td style="padding: 4px 0; color: #828c85;">Client Name:</td>
+            <td style="padding: 4px 0; text-align: right; font-weight: 600; color: #ffffff;">${escapeHtml(name)}</td>
+          </tr>
+          <tr>
+            <td style="padding: 4px 0; color: #828c85;">Client Email:</td>
+            <td style="padding: 4px 0; text-align: right; font-family: monospace; color: #a7ff4f;">
+              <a href="mailto:${escapeHtml(email)}" style="color: #a7ff4f; text-decoration: none;">${escapeHtml(email)}</a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 4px 0; color: #828c85;">Service Type:</td>
+            <td style="padding: 4px 0; text-align: right; color: #ffffff;">${escapeHtml(typeLabel)}</td>
+          </tr>
+        </table>
+
+        <div style="border-top: 1px solid #232a25; margin-top: 14px; padding-top: 12px;">
+          <span style="font-size: 11px; font-weight: 700; color: #828c85; letter-spacing: 0.5px; text-transform: uppercase; display: block; margin-bottom: 8px;">Project Requirements</span>
+          <div style="font-size: 13px; color: #e1e6e2; line-height: 1.6; white-space: pre-wrap; background: #0c0f0d; padding: 12px; border-radius: 4px; border: 1px solid #1e2420;">${escapeHtml(details)}</div>
+        </div>
+      </div>
+
+      <div style="font-size: 12px; color: #667269; margin-top: 24px; border-top: 1px solid #1e2420; padding-top: 14px; line-height: 1.5;">
+        <p style="margin: 0;">This lead was submitted via GeeLark Flows Custom Automation Form.</p>
+      </div>
+    </div>
+  `;
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${resendApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: fromEmail,
+      to: [toEmail],
+      reply_to: email,
+      subject: `New Custom Request: ${name} (${typeLabel}) [${requestId}]`,
+      html,
+    }),
+  });
+
+  const resData = await response.json();
+  if (!response.ok || resData.error || resData.statusCode >= 400) {
+    const errorMsg = resData.message || resData.error?.message || JSON.stringify(resData);
+    throw new Error(`Resend API Error (${response.status}): ${errorMsg}`);
+  }
+
+  return resData;
+}
+
 // ----------------------------------------------------
 // AUDIT LOGGING HELPER (Append-Only)
 // ----------------------------------------------------
@@ -1151,6 +1241,154 @@ app.post('/checkout/create', async (c) => {
   } catch (err) {
     console.error('Checkout creation error:', err);
     return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+// POST /api/custom-request (Inbound Custom Automation Leads)
+app.post('/custom-request', async (c) => {
+  try {
+    const db = c.env?.DB;
+    if (!db) {
+      return c.json({ success: false, error: 'Database service unavailable' }, 500);
+    }
+
+    let body;
+    try {
+      body = await c.req.json();
+    } catch (parseErr) {
+      return c.json({ success: false, error: 'Invalid JSON payload format' }, 400);
+    }
+
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return c.json({ success: false, error: 'Request body must be a JSON object' }, 400);
+    }
+
+    const { name, email, type, details } = body;
+
+    // 1. Validate Full Name
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return c.json({ success: false, error: 'Full name is required' }, 400);
+    }
+    const cleanName = name.trim();
+    if (cleanName.length > 100) {
+      return c.json({ success: false, error: 'Name must not exceed 100 characters' }, 400);
+    }
+
+    // 2. Validate Email
+    if (!email || typeof email !== 'string' || email.trim().length === 0) {
+      return c.json({ success: false, error: 'Email address is required' }, 400);
+    }
+    const cleanEmail = email.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanEmail) || cleanEmail.length > 254) {
+      return c.json({ success: false, error: 'Please provide a valid email address' }, 400);
+    }
+
+    // 3. Validate Request Type Enum
+    const cleanType = String(type || 'flow').trim().toLowerCase();
+    if (!['flow', 'consulting'].includes(cleanType)) {
+      return c.json({ success: false, error: "Service type must be 'flow' or 'consulting'" }, 400);
+    }
+
+    // 4. Validate Details / Requirements
+    if (!details || typeof details !== 'string' || details.trim().length === 0) {
+      return c.json({ success: false, error: 'Project requirements / details are required' }, 400);
+    }
+    const cleanDetails = details.trim();
+    if (cleanDetails.length < 10) {
+      return c.json({ success: false, error: 'Please provide at least 10 characters describing your project requirements' }, 400);
+    }
+    if (cleanDetails.length > 5000) {
+      return c.json({ success: false, error: 'Project requirements must not exceed 5000 characters' }, 400);
+    }
+
+    // 5. Abuse / Rate Limiting Protection (Max 5 requests per IP in 15 minutes)
+    const clientIp = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || null;
+    const ipHash = clientIp ? (await sha256Hex(clientIp)).slice(0, 32) : null;
+
+    if (ipHash) {
+      try {
+        const recentAttempts = await db.prepare(`
+          SELECT COUNT(*) as count FROM custom_automation_requests
+          WHERE ip_hash = ? AND created_at > datetime('now', '-15 minutes')
+        `).bind(ipHash).first();
+
+        if (recentAttempts && recentAttempts.count >= 5) {
+          return c.json({
+            success: false,
+            error: 'Too many requests submitted recently. Please wait a few minutes before submitting another request.',
+          }, 429);
+        }
+      } catch (rateErr) {
+        console.warn('Custom request rate limit check warning:', rateErr.message);
+      }
+    }
+
+    // 6. Generate Opaque Reference ID (Non-authentication support reference)
+    const requestId = 'req_' + generateSecureToken(6); // e.g. req_3f8a9e1b2c3d
+    const initialNotificationStatus = c.env?.RESEND_API_KEY ? 'pending' : 'skipped';
+
+    // 7. Authoritative D1 Lead Persistence (Data Minimized: zero user_agent, hashed IP)
+    await db.prepare(`
+      INSERT INTO custom_automation_requests (
+        id, customer_name, customer_email, request_type, details,
+        status, ip_hash, internal_notification_status
+      ) VALUES (?, ?, ?, ?, ?, 'new', ?, ?)
+    `).bind(
+      requestId,
+      cleanName,
+      cleanEmail,
+      cleanType,
+      cleanDetails,
+      ipHash,
+      initialNotificationStatus
+    ).run();
+
+    // 8. Non-blocking Internal Email Notification (Choice A: Persistence is authoritative)
+    let notificationStatus = 'skipped';
+    let notificationError = null;
+
+    if (c.env?.RESEND_API_KEY) {
+      try {
+        await sendCustomRequestNotificationEmail({
+          resendApiKey: c.env.RESEND_API_KEY,
+          requestId,
+          name: cleanName,
+          email: cleanEmail,
+          requestType: cleanType,
+          details: cleanDetails,
+        });
+        notificationStatus = 'sent';
+      } catch (emailErr) {
+        notificationStatus = 'failed';
+        notificationError = String(emailErr?.message || 'Email dispatch failed')
+          .replace(/re_[a-zA-Z0-9_-]+/g, '[REDACTED_API_KEY]')
+          .replace(/key-[a-zA-Z0-9_-]+/g, '[REDACTED_KEY]')
+          .slice(0, 250);
+        console.error('Custom request internal notification email warning:', notificationError);
+      }
+
+      // Record notification status update in D1
+      try {
+        await db.prepare(`
+          UPDATE custom_automation_requests
+          SET internal_notification_status = ?, internal_notification_error = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).bind(notificationStatus, notificationError, requestId).run();
+      } catch (updateErr) {
+        console.warn('Failed to update notification status:', updateErr.message);
+      }
+    }
+
+    return c.json({
+      success: true,
+      request_id: requestId,
+      customer_email: cleanEmail,
+      message: 'Your custom automation request has been received.',
+    }, 200);
+  } catch (err) {
+    console.error('Custom request submission error:', err.message);
+    return c.json({ success: false, error: 'An error occurred while saving your request. Please try again or contact support@geelarkflows.com.' }, 500);
   }
 });
 
@@ -1816,6 +2054,26 @@ app.get('/admin/dashboard', adminAuthMiddleware, async (c) => {
         title: `${unreadCount} Unread customer message${unreadCount === 1 ? '' : 's'} in Inbox`,
         link: '/admin/mail?filter=unread',
       });
+    }
+
+    // Check for custom automation requests needing notification attention (failed, skipped, or stale pending)
+    try {
+      const attnReqRow = await db.prepare(`
+        SELECT COUNT(*) as count FROM custom_automation_requests
+        WHERE internal_notification_status IN ('failed', 'skipped')
+           OR (internal_notification_status = 'pending' AND created_at < datetime('now', '-5 minutes'))
+      `).first();
+      const attentionCount = Number(attnReqRow?.count || 0);
+      if (attentionCount > 0) {
+        attentionAlerts.push({
+          id: 'alert_custom_requests_attention',
+          type: 'warning',
+          title: `${attentionCount} custom request notification${attentionCount === 1 ? '' : 's'} need attention.`,
+          link: '/admin/custom-requests',
+        });
+      }
+    } catch (e) {
+      // Graceful fallback if table is not yet migrated
     }
 
     const recentOrders = await db.prepare(`
@@ -3159,6 +3417,100 @@ app.post('/admin/resend/send-test-inbound', adminAuthMiddleware, requireRole('SU
     });
   } catch (err) {
     console.error('Send test inbound error:', err);
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+// ----------------------------------------------------
+// ADMIN CUSTOM AUTOMATION REQUESTS APIS
+// ----------------------------------------------------
+
+// GET /api/admin/custom-requests (List inbound leads)
+app.get('/admin/custom-requests', adminAuthMiddleware, async (c) => {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Database unavailable' }, 500);
+
+  try {
+    const page = Math.max(1, parseInt(c.req.query('page') || '1', 10));
+    const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '50', 10)));
+    const offset = (page - 1) * limit;
+    const status = (c.req.query('status') || '').trim().toLowerCase();
+
+    let query = 'SELECT * FROM custom_automation_requests';
+    const params = [];
+    if (status && status !== 'all') {
+      query += ' WHERE status = ?';
+      params.push(status);
+    }
+    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+
+    const requests = await db.prepare(query).bind(...params).all();
+
+    const countQuery = (status && status !== 'all')
+      ? 'SELECT COUNT(*) as total FROM custom_automation_requests WHERE status = ?'
+      : 'SELECT COUNT(*) as total FROM custom_automation_requests';
+    const countRes = (status && status !== 'all')
+      ? await db.prepare(countQuery).bind(status).first()
+      : await db.prepare(countQuery).bind().first();
+
+    return c.json({
+      success: true,
+      data: requests?.results || [],
+      pagination: {
+        page,
+        limit,
+        total: countRes?.total || 0,
+      },
+    });
+  } catch (err) {
+    console.error('Admin custom requests fetch error:', err.message);
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+// PATCH /api/admin/custom-requests/:id (Update lead status)
+app.patch('/admin/custom-requests/:id', adminAuthMiddleware, async (c) => {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Database unavailable' }, 500);
+  const user = c.get('adminUser');
+
+  try {
+    const id = c.req.param('id');
+    const body = await c.req.json().catch(() => ({}));
+    const { status } = body;
+
+    const validStatuses = ['new', 'in_review', 'contacted', 'closed'];
+    if (!status || !validStatuses.includes(status)) {
+      return c.json({ success: false, error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` }, 400);
+    }
+
+    const existing = await db.prepare('SELECT id, status FROM custom_automation_requests WHERE id = ?').bind(id).first();
+    if (!existing) {
+      return c.json({ success: false, error: 'Custom automation request not found' }, 404);
+    }
+
+    await db.prepare(`
+      UPDATE custom_automation_requests
+      SET status = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(status, id).run();
+
+    await recordAuditLog(db, {
+      adminId: user?.id || null,
+      adminEmail: user?.email || 'admin',
+      ip: c.req.header('cf-connecting-ip') || '127.0.0.1',
+      userAgent: c.req.header('user-agent'),
+      action: 'CUSTOM_REQUEST_STATUS_UPDATED',
+      entityType: 'lead',
+      entityId: id,
+      previousState: existing.status,
+      newState: status,
+    });
+
+    return c.json({ success: true, message: 'Status updated successfully', id, status });
+  } catch (err) {
+    console.error('Admin custom request update error:', err.message);
     return c.json({ success: false, error: err.message }, 500);
   }
 });

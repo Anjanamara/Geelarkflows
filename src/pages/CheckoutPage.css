@@ -607,6 +607,27 @@
   line-height: 1.4;
 }
 
+.checkout-legal-links {
+  margin: 8px 0 10px 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #5d6761;
+}
+
+.checkout-legal-links a {
+  color: #727A75;
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.checkout-legal-links a:hover {
+  color: #A7FF4F;
+  text-decoration: underline;
+}
+
 .support-copy {
   margin: 0;
   font-size: 11.5px;

@@ -11,6 +11,9 @@ import FloatingCart from './components/FloatingCart';
 import MrBeanFoldAnimation from './components/MrBeanFoldAnimation';
 import CartPage from './pages/CartPage';
 import CheckoutPage from './pages/CheckoutPage';
+import ContactPage from './pages/ContactPage';
+import LegalPage from './pages/LegalPage';
+import Footer from './components/Footer';
 import AdminApp from './admin/AdminApp';
 import { products, specialties } from './data/products';
 import './App.css';
@@ -56,7 +59,7 @@ const faqs = [
   },
 ];
 
-function Storefront() {
+function Storefront({ navigate }) {
   const { cartItemCount, openCart, activeFoldAnimation, handleFoldArrival, handleFoldComplete } = useCart();
   const [selectedProduct, setSelectedProduct] = useState(getProductFromPath);
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -180,6 +183,7 @@ function Storefront() {
             <a href="#catalog">Flow catalog</a>
             <a href="#specialties">Specialties</a>
             <a href="#faq">FAQ</a>
+            <a href="/contact" onClick={(e) => { e.preventDefault(); if (typeof navigate === 'function') navigate('/contact'); }}>Contact</a>
             <button type="button" onClick={() => openRequest('flow')}>Custom development</button>
           </nav>
         </div>
@@ -366,14 +370,7 @@ function Storefront() {
         />
       </main>
 
-      <footer className="site-footer">
-        <div className="brand-lockup footer-brand">
-          <span className="brand-mark">GF</span>
-          <span><strong>GeeLark</strong><small>Flows</small></span>
-        </div>
-        <p>Mobile automation flows for platform operations at scale.</p>
-        <button type="button" onClick={() => openRequest('consulting')}>Talk to us ↗</button>
-      </footer>
+      <Footer navigate={navigate} onOpenCustomRequest={openRequest} />
 
       {/* CartDrawer kept as fallback */}
       <ProductModal product={selectedProduct} onClose={closeProduct} />
@@ -416,6 +413,14 @@ export default function App() {
           <CartPage navigate={navigate} />
         ) : currentPath === '/checkout' ? (
           <CheckoutPage navigate={navigate} />
+        ) : currentPath === '/contact' ? (
+          <ContactPage navigate={navigate} />
+        ) : currentPath === '/terms' ? (
+          <LegalPage type="terms" navigate={navigate} />
+        ) : currentPath === '/privacy' ? (
+          <LegalPage type="privacy" navigate={navigate} />
+        ) : currentPath === '/refund-policy' ? (
+          <LegalPage type="refund-policy" navigate={navigate} />
         ) : (
           <Storefront navigate={navigate} />
         )}

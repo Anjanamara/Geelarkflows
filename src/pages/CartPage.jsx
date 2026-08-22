@@ -267,12 +267,20 @@ export default function CartPage({ navigate }) {
                     </div>
                   </div>
 
-                  {/* Subtle Support Contact */}
+                  {/* Subtle Support Contact & Legal Links */}
                   <div className="cart-support-box">
                     <span>Need help? </span>
                     <a href="mailto:support@geelarkflows.com" className="support-mail font-mono">
                       support@geelarkflows.com
                     </a>
+                  </div>
+
+                  <div className="cart-legal-links">
+                    <a href="/terms" onClick={(e) => { e.preventDefault(); if (typeof navigate === 'function') navigate('/terms'); }}>Terms</a>
+                    <span>·</span>
+                    <a href="/privacy" onClick={(e) => { e.preventDefault(); if (typeof navigate === 'function') navigate('/privacy'); }}>Privacy</a>
+                    <span>·</span>
+                    <a href="/refund-policy" onClick={(e) => { e.preventDefault(); if (typeof navigate === 'function') navigate('/refund-policy'); }}>Refunds</a>
                   </div>
                 </div>
               </aside>

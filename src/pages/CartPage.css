@@ -531,6 +531,27 @@
   text-decoration: underline;
 }
 
+.cart-legal-links {
+  margin-top: 10px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #5d6761;
+}
+
+.cart-legal-links a {
+  color: #727A75;
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.cart-legal-links a:hover {
+  color: #A7FF4F;
+  text-decoration: underline;
+}
+
 /* Mobile Sticky Action Bar */
 .cart-mobile-bar {
   display: none;

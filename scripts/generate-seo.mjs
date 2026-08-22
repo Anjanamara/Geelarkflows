@@ -52,17 +52,24 @@ const rootHtml = addVerification(baseHtml);
 await writeFile(baseHtmlPath, rootHtml, 'utf8');
 
 const flowUrls = products.map((product) => `${siteUrl}/flows/${product.id}/`);
-const sitemapUrls = [`${siteUrl}/`, ...flowUrls];
+const staticPages = [
+  { url: `${siteUrl}/`, priority: '1.0', changefreq: 'weekly' },
+  { url: `${siteUrl}/contact`, priority: '0.6', changefreq: 'monthly' },
+  { url: `${siteUrl}/terms`, priority: '0.4', changefreq: 'monthly' },
+  { url: `${siteUrl}/privacy`, priority: '0.4', changefreq: 'monthly' },
+  { url: `${siteUrl}/refund-policy`, priority: '0.4', changefreq: 'monthly' },
+  ...flowUrls.map((url) => ({ url, priority: '0.8', changefreq: 'monthly' })),
+];
 
 const sitemap = [
   '<?xml version="1.0" encoding="UTF-8"?>',
   '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
-  ...sitemapUrls.map((url, index) => [
+  ...staticPages.map((page) => [
     '  <url>',
-    `    <loc>${escapeHtml(url)}</loc>`,
+    `    <loc>${escapeHtml(page.url)}</loc>`,
     `    <lastmod>${lastModified}</lastmod>`,
-    `    <changefreq>${index === 0 ? 'weekly' : 'monthly'}</changefreq>`,
-    `    <priority>${index === 0 ? '1.0' : '0.8'}</priority>`,
+    `    <changefreq>${page.changefreq}</changefreq>`,
+    `    <priority>${page.priority}</priority>`,
     '  </url>',
   ].join('\n')),
   '</urlset>',
@@ -70,7 +77,7 @@ const sitemap = [
 ].join('\n');
 
 await writeFile(path.join(distDir, 'sitemap.xml'), sitemap, 'utf8');
-await writeFile(path.join(distDir, 'sitemap.txt'), `${sitemapUrls.join('\n')}\n`, 'utf8');
+await writeFile(path.join(distDir, 'sitemap.txt'), `${staticPages.map((p) => p.url).join('\n')}\n`, 'utf8');
 await writeFile(
   path.join(distDir, 'robots.txt'),
   `User-agent: *\nAllow: /\n\nSitemap: ${siteUrl}/sitemap.xml\n`,
@@ -98,16 +105,7 @@ for (const product of products) {
           price: product.price,
           priceCurrency: 'USD',
           availability: 'https://schema.org/InStock',
-          itemCondition: 'https://schema.org/NewCondition',
         },
-      },
-      {
-        '@type': 'BreadcrumbList',
-        itemListElement: [
-          { '@type': 'ListItem', position: 1, name: 'GeeLark Flows', item: `${siteUrl}/` },
-          { '@type': 'ListItem', position: 2, name: platform?.label || product.platform, item: `${siteUrl}/#catalog` },
-          { '@type': 'ListItem', position: 3, name: product.title, item: canonicalUrl },
-        ],
       },
     ],
   };
@@ -116,11 +114,14 @@ for (const product of products) {
     '<noscript>',
     '  <main>',
     `    <h1>${escapeHtml(product.title)}</h1>`,
+    `    <p><strong>Platform:</strong> ${escapeHtml(product.platform)}</p>`,
+    `    <p><strong>Price:</strong> $${product.price.toLocaleString('en-US')} USD</p>`,
     `    <p>${escapeHtml(product.details.description)}</p>`,
-    `    <p>Reusable GeeLark automation flow with unlimited runs. Price: $${product.price.toLocaleString('en-US')} USD.</p>`,
-    '    <h2>Included in this workflow</h2>',
-    `    <ul>${product.details.features.map((feature) => `<li>${escapeHtml(feature)}</li>`).join('')}</ul>`,
-    `    <p><a href="${siteUrl}/">Browse all GeeLark automation flows</a></p>`,
+    '    <h2>Included Features</h2>',
+    '    <ul>',
+    ...(product.details.features || []).map((feature) => `      <li>${escapeHtml(feature)}</li>`),
+    '    </ul>',
+    `    <p><a href="${siteUrl}/">Back to all GeeLark automation flows</a></p>`,
     '  </main>',
     '</noscript>',
   ].join('\n');
@@ -142,4 +143,67 @@ for (const product of products) {
   await writeFile(path.join(outputDir, 'index.html'), pageHtml, 'utf8');
 }
 
-console.log(`SEO generated: ${sitemapUrls.length} URLs for ${siteUrl}`);
+// Helper to generate static prerender pages
+async function generateStaticPage({ subPath, title, description, h1, bodyText }) {
+  const canonicalUrl = `${siteUrl}/${subPath}`;
+  const noscriptContent = [
+    '<noscript>',
+    '  <main>',
+    `    <h1>${escapeHtml(h1)}</h1>`,
+    `    <p>${escapeHtml(bodyText)}</p>`,
+    '    <p>Official Contact: <a href="mailto:support@geelarkflows.com">support@geelarkflows.com</a></p>',
+    `    <p><a href="${siteUrl}/">Return to GeeLark Flows Marketplace</a></p>`,
+    '  </main>',
+    '</noscript>',
+  ].join('\n');
+
+  let pageHtml = rootHtml
+    .replace(/<title>[\s\S]*?<\/title>/i, `<title>${escapeHtml(title)}</title>`)
+    .replace(/<meta name="description"[^>]*>/i, `<meta name="description" content="${escapeHtml(description)}" />`)
+    .replace(/<link rel="canonical"[^>]*>/i, `<link rel="canonical" href="${canonicalUrl}" />`)
+    .replace(/<meta property="og:url"[^>]*>/i, `<meta property="og:url" content="${canonicalUrl}" />`)
+    .replace(/<meta property="og:title"[^>]*>/i, `<meta property="og:title" content="${escapeHtml(title)}" />`)
+    .replace(/<meta property="og:description"[^>]*>/i, `<meta property="og:description" content="${escapeHtml(description)}" />`)
+    .replace(/<meta name="twitter:title"[^>]*>/i, `<meta name="twitter:title" content="${escapeHtml(title)}" />`)
+    .replace(/<meta name="twitter:description"[^>]*>/i, `<meta name="twitter:description" content="${escapeHtml(description)}" />`)
+    .replace('<div id="root"></div>', `<div id="root"></div>\n    ${noscriptContent}`);
+
+  const targetDir = path.join(distDir, subPath);
+  await mkdir(targetDir, { recursive: true });
+  await writeFile(path.join(targetDir, 'index.html'), pageHtml, 'utf8');
+}
+
+// Generate Static Prerenders
+await generateStaticPage({
+  subPath: 'contact',
+  title: 'Contact Support & Help | GeeLark Flows',
+  description: 'Contact GeeLark Flows support for order assistance, crypto payment confirmation, GeeLark setup coordination, or custom RPA workflow development.',
+  h1: 'Contact GeeLark Flows Support',
+  bodyText: 'Direct assistance for orders, GeeLark setup coordination, and custom automation engineering.',
+});
+
+await generateStaticPage({
+  subPath: 'terms',
+  title: 'Terms of Service | GeeLark Flows',
+  description: 'Terms governing the purchase, licensing, and usage of GeeLark automation workflow packages.',
+  h1: 'Terms of Service',
+  bodyText: 'Terms of Service governing the purchase, licensing, and operational usage of GeeLark automation workflows.',
+});
+
+await generateStaticPage({
+  subPath: 'privacy',
+  title: 'Privacy Policy | GeeLark Flows',
+  description: 'How GeeLark Flows collects, processes, and protects customer emails, order records, and technical request data.',
+  h1: 'Privacy Policy',
+  bodyText: 'Privacy Policy describing limited personal and operational data processed by GeeLark Flows.',
+});
+
+await generateStaticPage({
+  subPath: 'refund-policy',
+  title: 'Refund & Cancellation Policy | GeeLark Flows',
+  description: 'Policies regarding digital automation package delivery, GeeLark setup coordination, and cryptocurrency transaction handling.',
+  h1: 'Refund & Cancellation Policy',
+  bodyText: 'Refund and cancellation terms for digital automation deliverables and GeeLark Account Setup services.',
+});
+
+console.log(`SEO generated: ${staticPages.length} URLs for ${siteUrl}`);

@@ -561,6 +561,13 @@ export default function CheckoutPage({ navigate }) {
                       <p className="trust-copy">
                         Payment confirmation and fulfillment instructions will be sent to your email.
                       </p>
+                      <div className="checkout-legal-links">
+                        <a href="/terms" onClick={(e) => { e.preventDefault(); if (typeof navigate === 'function') navigate('/terms'); }}>Terms of Service</a>
+                        <span>·</span>
+                        <a href="/privacy" onClick={(e) => { e.preventDefault(); if (typeof navigate === 'function') navigate('/privacy'); }}>Privacy Policy</a>
+                        <span>·</span>
+                        <a href="/refund-policy" onClick={(e) => { e.preventDefault(); if (typeof navigate === 'function') navigate('/refund-policy'); }}>Refunds</a>
+                      </div>
                       <p className="support-copy">
                         Need help?{' '}
                         <a href="mailto:support@geelarkflows.com" className="support-link font-mono">

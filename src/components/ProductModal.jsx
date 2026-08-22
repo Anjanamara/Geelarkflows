@@ -4,7 +4,7 @@ import { platforms } from '../data/products';
 import './ProductModal.css';
 
 export default function ProductModal({ product, onClose }) {
-  const { cart, addToCart, addToCartWithAnimation, lastAddedId, openCart } = useCart();
+  const { cart, addToCart, addToCartWithAnimation, lastAddedId, openCart, openCheckout } = useCart();
 
   useEffect(() => {
     if (!product) return undefined;
@@ -32,13 +32,13 @@ export default function ProductModal({ product, onClose }) {
     addToCartWithAnimation(product, event.currentTarget);
   };
 
-  // 2. Direct Checkout: Instantly puts flow in cart, closes details, and opens checkout modal
+  // 2. Direct Checkout: Instantly puts flow in cart, closes details, and opens checkout page
   const handleDirectCheckout = () => {
     if (!isInCart) {
       addToCart(product);
     }
     onClose();
-    openCart();
+    openCheckout();
   };
 
   return (

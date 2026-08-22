@@ -1,9 +1,17 @@
-import { createContext, useContext, useState, useCallback, useMemo, useRef } from 'react';
+import { createContext, useContext, useState, useCallback, useMemo, useRef, useEffect } from 'react';
 
 const CartContext = createContext(null);
+const CART_STORAGE_KEY = 'geelark_cart_items';
 
 export function CartProvider({ children }) {
-  const [cart, setCart] = useState([]);
+  const [cart, setCart] = useState(() => {
+    try {
+      const saved = localStorage.getItem(CART_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [lastAddedId, setLastAddedId] = useState(null);
   const [isCartPulsing, setIsCartPulsing] = useState(false);
@@ -12,6 +20,13 @@ export function CartProvider({ children }) {
   const [animatingProductIds, setAnimatingProductIds] = useState(new Set());
 
   const pulseTimerRef = useRef(null);
+
+  // Sync cart to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
+    } catch (e) {}
+  }, [cart]);
 
   const showToast = useCallback((toastData) => {
     setToast(toastData);
@@ -174,7 +189,23 @@ export function CartProvider({ children }) {
 
   const clearCart = useCallback(() => setCart([]), []);
   const toggleCart = useCallback(() => setIsCartOpen((prev) => !prev), []);
-  const openCart = useCallback(() => setIsCartOpen(true), []);
+
+  const navigateTo = useCallback((path) => {
+    if (typeof window !== 'undefined' && window.location.pathname !== path) {
+      window.history.pushState({}, '', path);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+      window.scrollTo(0, 0);
+    }
+  }, []);
+
+  const openCart = useCallback(() => {
+    navigateTo('/cart');
+  }, [navigateTo]);
+
+  const openCheckout = useCallback(() => {
+    navigateTo('/checkout');
+  }, [navigateTo]);
+
   const closeCart = useCallback(() => setIsCartOpen(false), []);
 
   const cartTotal = useMemo(
@@ -206,6 +237,8 @@ export function CartProvider({ children }) {
       clearCart,
       toggleCart,
       openCart,
+      openCheckout,
+      navigateTo,
       closeCart,
       cartTotal,
       cartItemCount,
@@ -228,6 +261,8 @@ export function CartProvider({ children }) {
       clearCart,
       toggleCart,
       openCart,
+      openCheckout,
+      navigateTo,
       closeCart,
       cartTotal,
       cartItemCount,

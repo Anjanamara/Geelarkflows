@@ -9,6 +9,9 @@ import CustomRequestModal from './components/CustomRequestModal';
 import CartToast from './components/CartToast';
 import FloatingCart from './components/FloatingCart';
 import MrBeanFoldAnimation from './components/MrBeanFoldAnimation';
+import CartPage from './pages/CartPage';
+import CheckoutPage from './pages/CheckoutPage';
+import AdminApp from './admin/AdminApp';
 import { products, specialties } from './data/products';
 import './App.css';
 
@@ -372,7 +375,7 @@ function Storefront() {
         <button type="button" onClick={() => openRequest('consulting')}>Talk to us ↗</button>
       </footer>
 
-      <CartDrawer />
+      {/* CartDrawer kept as fallback */}
       <ProductModal product={selectedProduct} onClose={closeProduct} />
       <CustomRequestModal
         isOpen={isCustomRequestModalOpen}
@@ -384,10 +387,38 @@ function Storefront() {
 }
 
 export default function App() {
+  const [currentPath, setCurrentPath] = useState(() => window.location.pathname);
+
+  useEffect(() => {
+    const handlePop = () => {
+      setCurrentPath(window.location.pathname);
+    };
+    window.addEventListener('popstate', handlePop);
+    return () => window.removeEventListener('popstate', handlePop);
+  }, []);
+
+  const navigate = (path) => {
+    if (window.location.pathname !== path) {
+      window.history.pushState({}, '', path);
+      setCurrentPath(path);
+      window.scrollTo(0, 0);
+    }
+  };
+
+  if (currentPath.startsWith('/admin')) {
+    return <AdminApp />;
+  }
+
   return (
     <CartProvider>
       <FilterProvider>
-        <Storefront />
+        {currentPath === '/cart' ? (
+          <CartPage navigate={navigate} />
+        ) : currentPath === '/checkout' ? (
+          <CheckoutPage navigate={navigate} />
+        ) : (
+          <Storefront navigate={navigate} />
+        )}
       </FilterProvider>
     </CartProvider>
   );

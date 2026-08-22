@@ -13,6 +13,9 @@ export default function CartDrawer() {
   const [checkoutStep, setCheckoutStep] = useState('cart');
   const [activeOrder, setActiveOrder] = useState(null);
 
+  // Delivery / Setup Selection: 'download_package' | 'geelark_setup'
+  const [deliveryMethod, setDeliveryMethod] = useState('download_package');
+
   // Pre-payment configuration state: Centralized USDT multi-network ID ('trc20' | 'erc20' | 'bep20' | 'sol')
   const [selectedNetwork, setSelectedNetwork] = useState(DEFAULT_NETWORK_ID);
   const [customerEmail, setCustomerEmail] = useState('');
@@ -26,6 +29,20 @@ export default function CartDrawer() {
   const [pollCount, setPollCount] = useState(0);
 
   const pollingTimerRef = useRef(null);
+
+  // Authoritative Client-Side Mirror of Pricing Rules
+  const workflowSubtotal = useMemo(() => {
+    return cart.reduce((sum, item) => sum + (Number(item.price) || 0) * (Number(item.quantity) || 1), 0);
+  }, [cart]);
+
+  const setupFee = useMemo(() => {
+    if (deliveryMethod !== 'geelark_setup') return 0;
+    return workflowSubtotal >= 300 ? 0 : 50;
+  }, [deliveryMethod, workflowSubtotal]);
+
+  const calculatedFinalTotal = useMemo(() => {
+    return workflowSubtotal + setupFee;
+  }, [workflowSubtotal, setupFee]);
 
   // Restore existing active payment session on mount / refresh
   useEffect(() => {
@@ -60,7 +77,7 @@ export default function CartDrawer() {
 
       const resData = await response.json();
       if (resData.success && resData.data) {
-        const { isConfirmed, status, txHash, fullNetworkLabel, currency } = resData.data;
+        const { isConfirmed, status, txHash, fullNetworkLabel, currency, deliveryMethod: backendDelivery, workflowSubtotal: backendSubtotal, setupFee: backendSetup, totalUsd: backendTotal, fulfillmentStatus } = resData.data;
 
         if (isConfirmed || ['confirmed', 'finished', 'paid'].includes((status || '').toLowerCase())) {
           // Real backend confirmation verified
@@ -69,6 +86,11 @@ export default function CartDrawer() {
             status: 'confirmed',
             txHash: txHash || order.txHash || null,
             fullNetworkLabel: fullNetworkLabel || order.fullNetworkLabel || currency || order.currency,
+            deliveryMethod: backendDelivery || order.deliveryMethod || 'download_package',
+            workflowSubtotal: backendSubtotal || order.workflowSubtotal || order.totalUsd,
+            setupFee: backendSetup ?? order.setupFee ?? 0,
+            totalUsd: backendTotal || order.totalUsd,
+            fulfillmentStatus: fulfillmentStatus || order.fulfillmentStatus || 'fulfillment_pending',
           };
           setActiveOrder(confirmedOrder);
           try {
@@ -132,6 +154,11 @@ export default function CartDrawer() {
       return;
     }
 
+    if (!deliveryMethod || !['download_package', 'geelark_setup'].includes(deliveryMethod)) {
+      setCheckoutError('Please select a delivery method.');
+      return;
+    }
+
     setCheckingOut(true);
     setCheckoutError(null);
 
@@ -152,6 +179,7 @@ export default function CartDrawer() {
           email: customerEmail,
           network: selectedNetwork,
           payment_network: selectedNetwork,
+          delivery_method: deliveryMethod,
           cart: cartSnapshot,
         }),
       });
@@ -171,7 +199,10 @@ export default function CartDrawer() {
           fullNetworkLabel: resData.data.fullNetworkLabel,
           payCurrencyTicker: resData.data.payCurrencyTicker,
           qrCodeUrl: resData.data.qrCodeUrl,
-          totalUsd: resData.data.totalUsd || cartTotal,
+          deliveryMethod: resData.data.deliveryMethod || deliveryMethod,
+          workflowSubtotal: resData.data.workflowSubtotal || workflowSubtotal,
+          setupFee: resData.data.setupFee ?? setupFee,
+          totalUsd: resData.data.totalUsd || calculatedFinalTotal,
           email: customerEmail,
           items: cartSnapshot,
           status: 'awaiting_payment',
@@ -316,7 +347,7 @@ export default function CartDrawer() {
             {checkoutStep === 'cart' && (
               <span className="header-cart-summary">
                 {cart.length > 0
-                  ? `${cart.length} ${cart.length === 1 ? 'item' : 'items'} · $${cartTotal.toFixed(2)}`
+                  ? `${cart.length} ${cart.length === 1 ? 'workflow' : 'workflows'} · $${calculatedFinalTotal.toFixed(2)}`
                   : '0 items'}
               </span>
             )}
@@ -347,7 +378,7 @@ export default function CartDrawer() {
             <div className="checkout-column left-column">
               <div className="column-header">
                 <div className="column-header-left">
-                  <h2 className="column-title">Your flows</h2>
+                  <h2 className="column-title">Your workflows</h2>
                   {cart.length > 0 && <span className="column-count">{cart.length}</span>}
                 </div>
                 {cart.length > 0 && (
@@ -446,14 +477,25 @@ export default function CartDrawer() {
                     )}
                   </div>
 
+                  {/* Pricing Summary Breakdown */}
                   <div className="column-summary-footer">
                     <div className="summary-row">
-                      <span className="summary-label">Cart subtotal ({cart.length} {cart.length === 1 ? 'item' : 'items'})</span>
-                      <span className="summary-value font-mono">${cartTotal.toFixed(2)}</span>
+                      <span className="summary-label">Workflows ({cart.length} {cart.length === 1 ? 'item' : 'items'})</span>
+                      <span className="summary-value font-mono">${workflowSubtotal.toFixed(2)}</span>
+                    </div>
+                    <div className="summary-row">
+                      <span className="summary-label">
+                        {deliveryMethod === 'geelark_setup' ? 'GeeLark setup' : 'Delivery'}
+                      </span>
+                      <span className={`summary-value font-mono ${deliveryMethod === 'geelark_setup' && setupFee === 0 ? 'free-tag' : ''}`}>
+                        {deliveryMethod === 'geelark_setup'
+                          ? (setupFee === 0 ? 'FREE' : `$${setupFee.toFixed(2)}`)
+                          : 'Included'}
+                      </span>
                     </div>
                     <div className="summary-row main-total">
                       <span className="summary-label">Total amount due</span>
-                      <span className="summary-value font-mono total-bold">${cartTotal.toFixed(2)} USD</span>
+                      <span className="summary-value font-mono total-bold">${calculatedFinalTotal.toFixed(2)} USD</span>
                     </div>
                   </div>
                 </div>
@@ -463,8 +505,8 @@ export default function CartDrawer() {
             {/* Right: Payment Method & Customer Details */}
             <div className="checkout-column right-column">
               <div className="column-header">
-                <h2 className="column-title">Payment</h2>
-                <span className="column-badge">Instant crypto delivery</span>
+                <h2 className="column-title">Configuration & Payment</h2>
+                <span className="column-badge">Authoritative settlement</span>
               </div>
 
               <div className="payment-content-wrapper">
@@ -478,7 +520,7 @@ export default function CartDrawer() {
                     </div>
                     <h4 className="empty-payment-heading">Checkout unavailable</h4>
                     <p className="empty-payment-desc">
-                      Add at least one workflow from the catalog to configure instant crypto checkout.
+                      Add at least one workflow from the catalog to configure delivery and crypto payment.
                     </p>
                     <div className="empty-payment-steps-preview">
                       <div className="step-preview-item">
@@ -487,11 +529,11 @@ export default function CartDrawer() {
                       </div>
                       <div className="step-preview-item">
                         <span className="step-num">2</span>
-                        <span>Choose preferred USDT network</span>
+                        <span>Choose delivery method & USDT network</span>
                       </div>
                       <div className="step-preview-item">
                         <span className="step-num">3</span>
-                        <span>Receive package to your email</span>
+                        <span>Receive package or setup coordination within 24 hours</span>
                       </div>
                     </div>
                   </div>
@@ -501,7 +543,7 @@ export default function CartDrawer() {
                       {/* Step 1: Customer Email */}
                       <div className="form-group">
                         <label className="form-label" htmlFor="checkout-email">
-                          Email address
+                          Registered email address
                         </label>
                         <input
                           id="checkout-email"
@@ -513,11 +555,72 @@ export default function CartDrawer() {
                           onChange={(e) => setCustomerEmail(e.target.value)}
                         />
                         <span className="form-hint">
-                          Your digital automation workflow package will be delivered here.
+                          Order confirmation and delivery details will be sent to this email.
                         </span>
                       </div>
 
-                      {/* Step 2: Payment Asset Header */}
+                      {/* Step 2: Mandatory Delivery Method Selection */}
+                      <div className="form-group">
+                        <div className="form-label-row">
+                          <label className="form-label">Delivery method</label>
+                          <span className="form-label-hint">Select how you want to receive your workflows</span>
+                        </div>
+
+                        <div className="delivery-selection-cards">
+                          {/* Option A: Downloadable Package */}
+                          <div
+                            className={`delivery-card ${deliveryMethod === 'download_package' ? 'selected' : ''}`}
+                            onClick={() => setDeliveryMethod('download_package')}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setDeliveryMethod('download_package')}
+                          >
+                            <div className="delivery-card-header">
+                              <div className="delivery-radio-wrap">
+                                <span className="delivery-radio-dot" />
+                                <strong className="delivery-title">Downloadable Package</strong>
+                              </div>
+                              <span className="delivery-fee-badge included">Included</span>
+                            </div>
+                            <p className="delivery-desc">
+                              Receive the purchased workflow package at your registered email address.
+                            </p>
+                            <p className="delivery-support-text">
+                              Your downloadable package will be prepared and delivered to your registered email address within 24 hours after payment confirmation.
+                            </p>
+                          </div>
+
+                          {/* Option B: GeeLark Account Setup */}
+                          <div
+                            className={`delivery-card ${deliveryMethod === 'geelark_setup' ? 'selected' : ''}`}
+                            onClick={() => setDeliveryMethod('geelark_setup')}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setDeliveryMethod('geelark_setup')}
+                          >
+                            <div className="delivery-card-header">
+                              <div className="delivery-radio-wrap">
+                                <span className="delivery-radio-dot" />
+                                <strong className="delivery-title">GeeLark Account Setup</strong>
+                              </div>
+                              <span className={`delivery-fee-badge ${workflowSubtotal >= 300 ? 'free' : 'fee'}`}>
+                                {workflowSubtotal >= 300 ? 'FREE' : '+$50'}
+                              </span>
+                            </div>
+                            <p className="delivery-desc">
+                              Have our team set up the purchased workflows on your GeeLark account.
+                            </p>
+                            <p className="delivery-support-text">
+                              Our team will contact you within 24 hours after payment confirmation to coordinate the setup.
+                            </p>
+                            <p className="delivery-no-credentials-note">
+                              No account credentials required during checkout. Our team will coordinate setup details directly with you.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Step 3: Payment Asset Header */}
                       <div className="form-group">
                         <label className="form-label">Payment asset</label>
                         <div className="payment-asset-row">
@@ -531,7 +634,7 @@ export default function CartDrawer() {
                         </div>
                       </div>
 
-                      {/* Step 3: Multi-Network USDT Selector (4 Options) */}
+                      {/* Step 4: Multi-Network USDT Selector (4 Options) */}
                       <div className="form-group">
                         <div className="form-label-row">
                           <label className="form-label">USDT network</label>
@@ -566,10 +669,16 @@ export default function CartDrawer() {
                       <div className="payment-total-box">
                         <div className="payment-total-row">
                           <span className="pay-total-label">Total</span>
-                          <span className="pay-total-val font-mono">${cartTotal.toFixed(2)} USD</span>
+                          <span className="pay-total-val font-mono">${calculatedFinalTotal.toFixed(2)} USD</span>
                         </div>
                         <span className="pay-total-sub">
-                          Payable in <strong>USDT ({activeNetworkConfig.shortLabel} · {activeNetworkConfig.chainLabel})</strong>
+                          {deliveryMethod === 'geelark_setup' ? (
+                            setupFee === 0
+                              ? `Includes FREE GeeLark setup · Payable in USDT (${activeNetworkConfig.shortLabel} · ${activeNetworkConfig.chainLabel})`
+                              : `Includes $50 GeeLark setup · Payable in USDT (${activeNetworkConfig.shortLabel} · ${activeNetworkConfig.chainLabel})`
+                          ) : (
+                            `Includes Downloadable Package delivery · Payable in USDT (${activeNetworkConfig.shortLabel} · ${activeNetworkConfig.chainLabel})`
+                          )}
                         </span>
                       </div>
 
@@ -584,7 +693,7 @@ export default function CartDrawer() {
                       >
                         {checkingOut
                           ? 'Generating invoice...'
-                          : `Authorize payment · $${cartTotal.toFixed(2)} →`}
+                          : `Authorize payment · $${calculatedFinalTotal.toFixed(2)} →`}
                       </button>
                     </div>
                   </form>
@@ -628,15 +737,23 @@ export default function CartDrawer() {
                 </div>
               </div>
 
+              {/* Delivery Specification Pill */}
+              <div className="payment-delivery-spec-pill">
+                <span className="spec-k">Delivery:</span>
+                <strong className="spec-v">
+                  {activeOrder.deliveryMethod === 'geelark_setup' ? 'GeeLark Account Setup' : 'Downloadable Package'}
+                </strong>
+              </div>
+
               {/* Network Safety Warning */}
               <div className="payment-network-warning-box">
                 <span className="warning-icon">⚠</span>
-                <span>Send USDT on the <strong>{activeOrder.fullNetworkLabel || activeOrder.currency}</strong> network only.</span>
+                <span>Send USDT on the <strong>{activeOrder.fullNetworkLabel || activeOrder.currency}</strong> network only. Ensure withdrawal covers exchange network fees.</span>
               </div>
 
-              {/* Read-Only Fulfillment Email */}
+              {/* Read-Only Registered Email */}
               <div className="payment-readonly-info">
-                <span className="readonly-label">Delivery email</span>
+                <span className="readonly-label">Registered email</span>
                 <span className="readonly-val font-mono">{activeOrder.email}</span>
               </div>
 
@@ -719,11 +836,18 @@ export default function CartDrawer() {
               <div className="verifying-notice-card">
                 <p className="notice-main">We've received your payment submission.</p>
                 <p className="notice-sub">
-                  We will contact you on the mentioned email address within 24 hours for the delivery of your flow / automations:
+                  {activeOrder.deliveryMethod === 'geelark_setup'
+                    ? 'Our team will contact you within 24 hours after payment confirmation to coordinate setup on your GeeLark account.'
+                    : 'Your downloadable package will be prepared and delivered to your registered email address within 24 hours after payment confirmation:'}
                 </p>
                 <div className="verifying-email-box">
                   <span className="email-text font-mono">{activeOrder.email}</span>
                 </div>
+                {activeOrder.deliveryMethod === 'geelark_setup' && (
+                  <p className="verifying-extra-note">
+                    You don't need to provide your GeeLark account details during checkout. Our team will collect the required information separately.
+                  </p>
+                )}
               </div>
 
               {/* Order IDs */}
@@ -737,8 +861,8 @@ export default function CartDrawer() {
                   <strong className="font-mono">{activeOrder.paymentId}</strong>
                 </div>
                 <div className="v-meta-row">
-                  <span>Network:</span>
-                  <span className="font-mono">{activeOrder.fullNetworkLabel || activeOrder.currency}</span>
+                  <span>Delivery:</span>
+                  <span className="font-mono">{activeOrder.deliveryMethod === 'geelark_setup' ? 'GeeLark Setup' : 'Downloadable'}</span>
                 </div>
                 <div className="v-meta-row">
                   <span>Status:</span>
@@ -767,7 +891,7 @@ export default function CartDrawer() {
         )}
 
         {/* ------------------------------------------------------------ */}
-        {/* STATE 4: PAYMENT CONFIRMED & COMPLETED (Backend Verified ONLY) */}
+        {/* STATE 4: PAYMENT CONFIRMED (Decoupled from Fulfillment) */}
         {/* ------------------------------------------------------------ */}
         {checkoutStep === 'completed' && activeOrder && (
           <div className="payment-dedicated-layout">
@@ -775,23 +899,56 @@ export default function CartDrawer() {
               <div className="receipt-success-badge">
                 <span className="receipt-check-glyph">✓</span>
               </div>
-              <h2 className="receipt-success-title">Payment complete</h2>
-              <p className="payment-sub-instruction">Thank you. Order #{activeOrder.orderId}</p>
+              <h2 className="receipt-success-title">Payment confirmed</h2>
+              <p className="payment-sub-instruction">
+                Thank you for your order. Your selected delivery method is now being processed.
+              </p>
             </div>
 
             <div className="payment-dedicated-scroll">
-              <div className="receipt-delivery-card">
-                <strong>Order confirmed & processing</strong>
-                <p>
-                  Your cryptocurrency payment has been verified on the blockchain. We will contact you at{' '}
-                  <span className="email-highlight font-mono">{activeOrder.email}</span> within 24 hours for the delivery of your flow / automations.
-                </p>
-              </div>
+              {/* Delivery-Method-Aware Processing Card */}
+              {activeOrder.deliveryMethod === 'geelark_setup' ? (
+                <div className="receipt-delivery-card setup-mode">
+                  <div className="receipt-card-header">
+                    <span className="receipt-delivery-icon">⚡</span>
+                    <strong>GeeLark account setup</strong>
+                  </div>
+                  <p>
+                    Our team will contact you at your registered email address within 24 hours to coordinate the setup.
+                  </p>
+                  <p className="receipt-credentials-reassurance">
+                    You don't need to provide your GeeLark account details during checkout. Our team will collect the required information separately.
+                  </p>
+                  <div className="receipt-status-pill">
+                    <span className="status-dot-pending" />
+                    <span>Status: Setup coordination pending</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="receipt-delivery-card package-mode">
+                  <div className="receipt-card-header">
+                    <span className="receipt-delivery-icon">📦</span>
+                    <strong>Downloadable package</strong>
+                  </div>
+                  <p>
+                    Your workflow package will be prepared and delivered to your registered email address within 24 hours.
+                  </p>
+                  <div className="receipt-email-row">
+                    <span className="email-label">Delivery email:</span>
+                    <span className="email-highlight font-mono">{activeOrder.email}</span>
+                  </div>
+                  <div className="receipt-status-pill">
+                    <span className="status-dot-pending" />
+                    <span>Status: Preparing delivery</span>
+                  </div>
+                </div>
+              )}
 
+              {/* Summary Breakdown Table */}
               <div className="receipt-summary-table">
                 <div className="summary-row">
                   <span className="row-k">Order ID</span>
-                  <span className="row-v font-mono">{activeOrder.orderId}</span>
+                  <span className="row-v font-mono">#{activeOrder.orderId}</span>
                 </div>
                 <div className="summary-row">
                   <span className="row-k">Invoice ID</span>
@@ -808,8 +965,30 @@ export default function CartDrawer() {
                   <span className="row-v">USDT ({activeOrder.fullNetworkLabel || activeOrder.currency})</span>
                 </div>
                 <div className="summary-row">
-                  <span className="row-k">Amount paid</span>
-                  <span className="row-v font-mono">${activeOrder.totalUsd.toFixed(2)} USD</span>
+                  <span className="row-k">Delivery method</span>
+                  <span className="row-v">
+                    {activeOrder.deliveryMethod === 'geelark_setup' ? 'GeeLark Account Setup' : 'Downloadable Package'}
+                  </span>
+                </div>
+                <div className="summary-row">
+                  <span className="row-k">Workflow subtotal</span>
+                  <span className="row-v font-mono">
+                    ${Number(activeOrder.workflowSubtotal || activeOrder.totalUsd).toFixed(2)} USD
+                  </span>
+                </div>
+                <div className="summary-row">
+                  <span className="row-k">Delivery / Setup</span>
+                  <span className="row-v font-mono">
+                    {activeOrder.deliveryMethod === 'geelark_setup'
+                      ? (activeOrder.setupFee === 0 ? 'FREE' : `$${Number(activeOrder.setupFee).toFixed(2)}`)
+                      : 'Included'}
+                  </span>
+                </div>
+                <div className="summary-row" style={{ borderTop: '1px solid var(--admin-border, rgba(255,255,255,0.12))', paddingTop: '8px', marginTop: '6px' }}>
+                  <span className="row-k" style={{ fontWeight: 700, color: '#ffffff' }}>Amount paid</span>
+                  <span className="row-v font-mono" style={{ fontWeight: 700, color: 'var(--accent-lime, #a7ff4f)', fontSize: '14px' }}>
+                    ${Number(activeOrder.totalUsd).toFixed(2)} USD
+                  </span>
                 </div>
 
                 {activeOrder.items && activeOrder.items.length > 0 && (
@@ -823,6 +1002,17 @@ export default function CartDrawer() {
                     ))}
                   </div>
                 )}
+              </div>
+
+              {/* Subtle Professional Support Section */}
+              <div className="receipt-support-section">
+                <span className="support-heading">Need help?</span>
+                <p className="support-body">
+                  If you have any questions about your order or need assistance, contact our support team at{' '}
+                  <a href="mailto:support@geelarkflows.com" className="support-link font-mono">
+                    support@geelarkflows.com
+                  </a>.
+                </p>
               </div>
             </div>
 

@@ -131,6 +131,7 @@ button {
 input,
 textarea {
   color: var(--text-primary);
+  background-color: transparent;
 }
 
 button:focus-visible,
@@ -139,7 +140,7 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
   outline: 2px solid var(--accent-lime);
-  outline-offset: 3px;
+  outline-offset: 2px;
 }
 
 .btn-primary,

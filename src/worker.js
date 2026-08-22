@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { products } from './data/products.js';
 
-const app = new Hono().basePath('/api');
+const app = new Hono();
 
 /**
  * Server-Authoritative Product Catalog Map (O(1) lookup)
@@ -3515,4 +3515,28 @@ app.patch('/admin/custom-requests/:id', adminAuthMiddleware, async (c) => {
   }
 });
 
-export default app;
+// ----------------------------------------------------
+// ROOT CLOUDFLARE WORKER ROUTER WITH SPA ASSETS FALLBACK
+// ----------------------------------------------------
+const mainApp = new Hono();
+
+// Mount all API endpoints under /api
+mainApp.route('/api', app);
+
+// Forward root webhooks if sent directly to root
+mainApp.post('/webhooks/crypto', (c) => app.fetch(new Request(new URL('/webhooks/crypto', c.req.url), c.req.raw), c.env, c.executionCtx));
+mainApp.post('/webhooks/resend-inbound', (c) => app.fetch(new Request(new URL('/webhooks/resend-inbound', c.req.url), c.req.raw), c.env, c.executionCtx));
+
+// Fallback to Cloudflare Workers Static Assets for all non-API / SPA routes (/cart, /checkout, /admin, etc.)
+mainApp.all('*', async (c) => {
+  if (c.env?.ASSETS) {
+    const res = await c.env.ASSETS.fetch(c.req.raw);
+    if (res.status === 404 && !c.req.path.includes('.')) {
+      return c.env.ASSETS.fetch(new Request(new URL('/index.html', c.req.url), c.req.raw));
+    }
+    return res;
+  }
+  return c.text('Not Found', 404);
+});
+
+export default mainApp;

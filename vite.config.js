@@ -413,6 +413,8 @@ export default defineConfig(({ mode }) => {
                     totalUsd,
                     payAmountCrypto,
                     payAddress,
+                    addressVerified: false,
+                    verificationSource: livePaymentMockEnabled ? 'local_live_unverified' : 'local_development_mock',
                     expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
                     status: 'waiting',
                     fulfillmentStatus: 'not_ready',

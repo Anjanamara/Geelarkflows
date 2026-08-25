@@ -219,6 +219,8 @@ export default function CheckoutPage({ navigate }) {
           paymentId: resData.data.paymentId,
           statusToken: resData.data.statusToken,
           payAddress: resData.data.payAddress,
+          addressVerified: resData.data.addressVerified === true,
+          verificationSource: resData.data.verificationSource || null,
           payAmountCrypto: resData.data.payAmountCrypto,
           currency: resData.data.currency,
           network: resData.data.network,
@@ -666,9 +668,14 @@ export default function CheckoutPage({ navigate }) {
 
                   {/* Wallet Address Console */}
                   <div className="wallet-address-section">
-                    <span className="wallet-section-label">
-                      Receiving wallet address ({activeOrder.fullNetworkLabel || activeOrder.currency})
-                    </span>
+                    <div className="wallet-label-row">
+                      <span className="wallet-section-label">
+                        Receiving wallet address ({activeOrder.fullNetworkLabel || activeOrder.currency})
+                      </span>
+                      {activeOrder.addressVerified && (
+                        <span className="wallet-verified-badge">✓ Verified twice with NOWPayments</span>
+                      )}
+                    </div>
                     <div className="wallet-copy-bar">
                       <span className="wallet-address-text font-mono">{activeOrder.payAddress}</span>
                       <button

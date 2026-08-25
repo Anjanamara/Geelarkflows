@@ -21,26 +21,38 @@ async function runAsyncTest(name, fn) {
 
 // Intercept fetch calls to capture NOWPayments payload without hitting external servers
 let lastNowPaymentsPayload = null;
+let nowPaymentsFetches = [];
+let providerScenario = {};
 const originalFetch = globalThis.fetch;
 
 globalThis.fetch = async (url, options) => {
   const urlStr = String(url);
   if (urlStr.includes('api.nowpayments.io')) {
+    const isCreate = (options?.method || 'GET').toUpperCase() === 'POST';
+    nowPaymentsFetches.push({ url: urlStr, method: isCreate ? 'POST' : 'GET' });
     if (options && options.body) {
       lastNowPaymentsPayload = JSON.parse(options.body);
     }
+    const baseResponse = {
+      payment_id: '998877',
+      payment_status: 'waiting',
+      pay_address: 'TMockReceivingAddress1234567890XYZ',
+      price_amount: lastNowPaymentsPayload?.price_amount || 100,
+      price_currency: 'usd',
+      pay_amount: lastNowPaymentsPayload?.price_amount || 100,
+      pay_currency: lastNowPaymentsPayload?.pay_currency || 'usdttrc20',
+      order_id: lastNowPaymentsPayload?.order_id || 'ord_mock',
+    };
+    const responseBody = {
+      ...baseResponse,
+      ...(isCreate ? providerScenario.createOverrides : providerScenario.verifyOverrides),
+    };
+    const responseStatus = isCreate
+      ? (providerScenario.createStatus || 200)
+      : (providerScenario.verifyStatus || 200);
     return new Response(
-      JSON.stringify({
-        payment_id: 'mock_pay_998877',
-        payment_status: 'waiting',
-        pay_address: 'TMockReceivingAddress1234567890XYZ',
-        price_amount: lastNowPaymentsPayload?.price_amount || 100,
-        price_currency: 'usd',
-        pay_amount: lastNowPaymentsPayload?.price_amount || 100,
-        pay_currency: lastNowPaymentsPayload?.pay_currency || 'usdttrc20',
-        order_id: lastNowPaymentsPayload?.order_id || 'ord_mock',
-      }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } }
+      JSON.stringify(responseBody),
+      { status: responseStatus, headers: { 'Content-Type': 'application/json' } }
     );
   }
   return originalFetch(url, options);
@@ -48,6 +60,7 @@ globalThis.fetch = async (url, options) => {
 
 // Mock D1 database to capture inserted orders and payments
 let lastInsertedOrder = null;
+let lastInsertedPayment = null;
 const mockDb = {
   prepare: (query) => {
     return {
@@ -69,6 +82,15 @@ const mockDb = {
                 status_token_hash: args[12],
               };
             }
+            if (query.includes('INSERT INTO crypto_payments')) {
+              lastInsertedPayment = {
+                id: args[0],
+                order_id: args[1],
+                pay_address: args[5],
+                pay_amount_crypto_text: args[7],
+                verification_source: args[13],
+              };
+            }
             return { success: true };
           },
           first: async () => null,
@@ -85,9 +107,12 @@ const mockEnv = {
   DB: mockDb,
 };
 
-async function executeCheckoutRoute(payload) {
+async function executeCheckoutRoute(payload, scenario = {}) {
   lastNowPaymentsPayload = null;
+  nowPaymentsFetches = [];
+  providerScenario = scenario;
   lastInsertedOrder = null;
+  lastInsertedPayment = null;
 
   const req = new Request('https://geelarkflows.com/api/checkout/create', {
     method: 'POST',
@@ -116,6 +141,11 @@ await runAsyncTest('Case 1: Legitimate request resolves authoritative price ($10
   assert.equal(lastNowPaymentsPayload.price_amount, 1000);
   assert.equal(lastInsertedOrder.total_usd, 1000);
   assert.equal(lastInsertedOrder.items[0].price, 1000);
+  assert.equal(nowPaymentsFetches.length, 2);
+  assert.deepEqual(nowPaymentsFetches.map(({ method }) => method), ['POST', 'GET']);
+  assert.equal(data.data.addressVerified, true);
+  assert.equal(data.data.verificationSource, 'nowpayments_api_double_verified');
+  assert.equal(lastInsertedPayment.verification_source, 'nowpayments_api_double_verified');
 });
 
 // 2. Client price = $1 -> ignored by actual Hono route
@@ -389,6 +419,64 @@ await runAsyncTest('Case 15: Malformed checkout JSON is rejected without leaking
   assert.equal(res.status, 400);
   assert.equal(data.error, 'Invalid JSON payload format.');
   assert.doesNotMatch(JSON.stringify(data), /SyntaxError|Unexpected token|JSON at position/i);
+});
+
+await runAsyncTest('Case 16: Checkout fails closed when the second NOWPayments lookup disagrees with the created invoice', async () => {
+  const mismatches = [
+    { payment_id: '998878' },
+    { order_id: 'ord_wrong' },
+    { payment_status: 'unknown' },
+    { pay_address: 'TDifferentProviderAddress987654321XYZ' },
+    { pay_currency: 'usdterc20' },
+    { price_amount: 1001 },
+    { pay_amount: 999 },
+  ];
+
+  for (const verifyOverrides of mismatches) {
+    const { status, data } = await executeCheckoutRoute({
+      email: 'double-check@example.com',
+      delivery_method: 'download_package',
+      network: 'trc20',
+      cart: [{ id: 'instagram-account-creation', quantity: 1 }],
+    }, { verifyOverrides });
+
+    assert.equal(status, 502);
+    assert.equal(data.success, false);
+    assert.equal(data.data, undefined);
+    assert.equal(lastInsertedOrder, null);
+    assert.equal(lastInsertedPayment, null);
+    assert.equal(nowPaymentsFetches.length, 2);
+    assert.doesNotMatch(JSON.stringify(data), /TMockReceivingAddress|TDifferentProviderAddress/);
+  }
+});
+
+await runAsyncTest('Case 17: Checkout reveals no address when the provider verification lookup is unavailable', async () => {
+  const { status, data } = await executeCheckoutRoute({
+    email: 'provider-down@example.com',
+    delivery_method: 'download_package',
+    network: 'trc20',
+    cart: [{ id: 'instagram-account-creation', quantity: 1 }],
+  }, { verifyStatus: 503 });
+
+  assert.equal(status, 502);
+  assert.equal(data.success, false);
+  assert.equal(lastInsertedPayment, null);
+  assert.doesNotMatch(JSON.stringify(data), /TMockReceivingAddress/);
+});
+
+await runAsyncTest('Case 18: Checkout rejects a non-provider placeholder payment ID before displaying an address', async () => {
+  const { status, data } = await executeCheckoutRoute({
+    email: 'no-placeholder@example.com',
+    delivery_method: 'download_package',
+    network: 'trc20',
+    cart: [{ id: 'instagram-account-creation', quantity: 1 }],
+  }, { createOverrides: { payment_id: 'pay_placeholder_123' } });
+
+  assert.equal(status, 502);
+  assert.equal(data.success, false);
+  assert.equal(nowPaymentsFetches.length, 1);
+  assert.equal(lastInsertedPayment, null);
+  assert.doesNotMatch(JSON.stringify(data), /TMockReceivingAddress/);
 });
 
 console.log('\n================================================================');

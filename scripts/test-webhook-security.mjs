@@ -51,6 +51,7 @@ function createNowPaymentsPayload(paymentStatus = 'finished', overrides = {}) {
     payment_id: 'pay_sec_test_001',
     order_id: 'ord_3a8b9f12',
     payment_status: paymentStatus,
+    pay_address: 'TProviderVerifiedAddress1234567890XYZ',
     pay_currency: 'usdttrc20',
     pay_amount: '1000',
     actually_paid: '1000',
@@ -90,6 +91,7 @@ function createMockDb() {
     currency: 'USDT (TRC-20)',
     network_id: 'trc20',
     provider_currency: 'usdttrc20',
+    pay_address: 'TProviderVerifiedAddress1234567890XYZ',
     pay_amount_crypto: 1000,
     pay_amount_crypto_text: '1000',
     expected_price_usd_cents: 100000,
@@ -410,6 +412,25 @@ await runAsyncTest('NOWPayments Case 11: Signed underpayment is quarantined for 
   const db = createMockDb();
   const env = { DB: db, CRYPTO_WEBHOOK_SECRET: TEST_CRYPTO_SECRET };
   const payload = createNowPaymentsPayload('finished', { actually_paid: '999.99' });
+  const hmac = generateNowPaymentsHmac(payload, TEST_CRYPTO_SECRET);
+  const res = await app.request(new Request('https://geelarkflows.com/api/webhooks/crypto', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-nowpayments-sig': hmac },
+    body: JSON.stringify(payload),
+  }), undefined, env);
+
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).status, 'manual_review');
+  assert.equal(db.orders.get('ord_3a8b9f12').status, 'pending');
+  assert.equal(db.payments.get('ord_3a8b9f12').status, 'review_required');
+});
+
+await runAsyncTest('NOWPayments Case 12: Signed callback with a different receiving address is quarantined', async () => {
+  const db = createMockDb();
+  const env = { DB: db, CRYPTO_WEBHOOK_SECRET: TEST_CRYPTO_SECRET };
+  const payload = createNowPaymentsPayload('finished', {
+    pay_address: 'TDifferentReceivingAddress987654321XYZ',
+  });
   const hmac = generateNowPaymentsHmac(payload, TEST_CRYPTO_SECRET);
   const res = await app.request(new Request('https://geelarkflows.com/api/webhooks/crypto', {
     method: 'POST',

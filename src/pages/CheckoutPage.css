@@ -100,7 +100,9 @@
 .network-warning-box { margin-top: 10px; padding: 12px; display: flex; align-items: flex-start; gap: 9px; border: 1px solid rgba(214,155,39,0.2); border-radius: 9px; background: rgba(214,155,39,0.07); color: #735823; font-size: 0.59rem; line-height: 1.5; }
 .warning-symbol { flex: 0 0 auto; }
 .wallet-address-section { margin-top: 20px; }
+.wallet-label-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 7px 12px; }
 .wallet-section-label { color: var(--text-secondary); font-size: 0.58rem; font-weight: 750; }
+.wallet-verified-badge { color: var(--accent-lime-dark); font-family: var(--font-mono); font-size: 0.48rem; font-weight: 700; letter-spacing: 0.02em; }
 .wallet-copy-bar { margin-top: 7px; padding: 8px 8px 8px 12px; display: flex; align-items: center; gap: 10px; border: 1px solid var(--border-medium); border-radius: 9px; background: #080e17; }
 .wallet-address-text { min-width: 0; flex: 1; overflow: hidden; font-size: 0.57rem; text-overflow: ellipsis; white-space: nowrap; }
 .btn-copy-address { min-height: 34px; padding: 0 10px; flex: 0 0 auto; border-radius: 7px; background: var(--text-primary); color: var(--text-inverse); font-size: 0.54rem; font-weight: 750; }

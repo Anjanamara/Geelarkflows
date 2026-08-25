@@ -152,6 +152,54 @@ function isDecimalAtLeast(actual, expected) {
   return actualScaled !== null && expectedScaled !== null && actualScaled >= expectedScaled;
 }
 
+function verifyProviderInvoiceSnapshot(payload, expected) {
+  if (!payload || !expected) {
+    return { valid: false, reason: 'NOWPayments returned an empty verification response.' };
+  }
+
+  if (String(payload.payment_id || '') !== String(expected.paymentId || '')) {
+    return { valid: false, reason: 'NOWPayments payment identifier mismatch.' };
+  }
+
+  if (String(payload.order_id || '') !== String(expected.orderId || '')) {
+    return { valid: false, reason: 'NOWPayments order identifier mismatch.' };
+  }
+
+  const providerStatus = String(payload.payment_status || '').toLowerCase();
+  const validProviderStatuses = new Set([
+    'waiting', 'confirming', 'confirmed', 'sending', 'partially_paid',
+    'finished', 'paid', 'failed', 'refunded', 'expired',
+  ]);
+  if (!validProviderStatuses.has(providerStatus)) {
+    return { valid: false, reason: 'NOWPayments returned an invalid payment status.' };
+  }
+
+  const providerAddress = String(payload.pay_address || '').trim();
+  const expectedAddress = String(expected.payAddress || '').trim();
+  if (!providerAddress || !expectedAddress || providerAddress !== expectedAddress) {
+    return { valid: false, reason: 'NOWPayments receiving address mismatch.' };
+  }
+
+  const providerCurrency = normalizeCurrency(payload.pay_currency);
+  const expectedCurrency = normalizeCurrency(expected.providerCurrency);
+  if (!providerCurrency || !expectedCurrency || providerCurrency !== expectedCurrency) {
+    return { valid: false, reason: 'NOWPayments payment currency or blockchain mismatch.' };
+  }
+
+  const providerUsdCents = usdToCents(payload.price_amount);
+  if (normalizeCurrency(payload.price_currency) !== 'usd' || providerUsdCents !== Number(expected.usdCents)) {
+    return { valid: false, reason: 'NOWPayments USD invoice total mismatch.' };
+  }
+
+  const providerCryptoAmount = decimalToScaledBigInt(payload.pay_amount);
+  const expectedCryptoAmount = decimalToScaledBigInt(expected.cryptoAmount);
+  if (providerCryptoAmount === null || expectedCryptoAmount === null || providerCryptoAmount !== expectedCryptoAmount) {
+    return { valid: false, reason: 'NOWPayments cryptocurrency amount mismatch.' };
+  }
+
+  return { valid: true };
+}
+
 function getSiteOrigin(env) {
   const configured = String(env?.SITE_URL || 'https://geelarkflows.com').trim();
   try {
@@ -173,27 +221,23 @@ function reconcileProviderPayment(payload, payment, order) {
     return { valid: false, reason: 'The signed event does not match a stored invoice and order.' };
   }
 
-  if (String(payload.payment_id || '') !== String(payment.id) || String(payload.order_id || '') !== String(order.id)) {
-    return { valid: false, reason: 'Provider payment or order identifier mismatch.' };
-  }
-
   const network = resolvePaymentNetwork(payment.network_id || payment.provider_currency || payment.currency);
-  const expectedCurrency = normalizeCurrency(payment.provider_currency || network?.nowpayments_currency);
-  const actualCurrency = normalizeCurrency(payload.pay_currency);
-  if (!expectedCurrency || !actualCurrency || expectedCurrency !== actualCurrency) {
-    return { valid: false, reason: 'Payment currency or blockchain does not match the stored invoice.' };
+  const snapshotVerification = verifyProviderInvoiceSnapshot(payload, {
+    paymentId: payment.id,
+    orderId: order.id,
+    payAddress: payment.pay_address,
+    providerCurrency: payment.provider_currency || network?.nowpayments_currency,
+    cryptoAmount: payment.pay_amount_crypto_text || payment.pay_amount_crypto,
+    usdCents: Number(order.total_usd_cents ?? usdToCents(order.total_usd)),
+  });
+  if (!snapshotVerification.valid) {
+    return snapshotVerification;
   }
 
   const expectedCrypto = payment.pay_amount_crypto_text || payment.pay_amount_crypto;
   const actualCrypto = payload.actually_paid;
   if (!isDecimalAtLeast(actualCrypto, expectedCrypto)) {
     return { valid: false, reason: 'The received cryptocurrency amount is below the stored invoice amount.' };
-  }
-
-  const expectedUsdCents = Number(order.total_usd_cents ?? usdToCents(order.total_usd));
-  const providerUsdCents = usdToCents(payload.price_amount);
-  if (!Number.isInteger(expectedUsdCents) || providerUsdCents !== expectedUsdCents || normalizeCurrency(payload.price_currency) !== 'usd') {
-    return { valid: false, reason: 'Provider USD price does not match the stored order total.' };
   }
 
   return { valid: true };
@@ -1278,13 +1322,41 @@ app.post('/checkout/create', async (c) => {
         const nowPayData = await nowPayRes.json();
         const providerAmount = decimalToScaledBigInt(nowPayData?.pay_amount);
         const providerCurrencyMatches = normalizeCurrency(nowPayData?.pay_currency) === normalizeCurrency(networkConfig.nowpayments_currency);
-        if (nowPayData?.pay_address && nowPayData?.payment_id && providerAmount !== null && providerAmount > 0n && providerCurrencyMatches) {
-          payAddress = nowPayData.pay_address;
-          payAmountCrypto = String(nowPayData.pay_amount || finalTotal);
-          cryptoRate = nowPayData.price_amount && nowPayData.pay_amount
-            ? String(Number(nowPayData.price_amount) / Number(nowPayData.pay_amount))
-            : '1';
-          actualPaymentId = String(nowPayData.payment_id);
+        if (nowPayRes.ok && nowPayData?.pay_address && nowPayData?.payment_id && providerAmount !== null && providerAmount > 0n && providerCurrencyMatches) {
+          const candidatePaymentId = String(nowPayData.payment_id);
+          const candidateAddress = String(nowPayData.pay_address).trim();
+          const candidateCryptoAmount = String(nowPayData.pay_amount);
+
+          if (!/^\d+$/.test(candidatePaymentId)) {
+            gatewayError = 'Gateway returned an invalid payment identifier.';
+          } else {
+            const verifyRes = await fetch(`https://api.nowpayments.io/v1/payment/${candidatePaymentId}`, {
+              headers: { 'x-api-key': apiKey },
+            });
+            const verifiedPayment = await verifyRes.json();
+            const snapshotVerification = verifyProviderInvoiceSnapshot(verifiedPayment, {
+              paymentId: candidatePaymentId,
+              orderId,
+              payAddress: candidateAddress,
+              providerCurrency: networkConfig.nowpayments_currency,
+              cryptoAmount: candidateCryptoAmount,
+              usdCents: usdToCents(finalTotal),
+            });
+
+            if (!verifyRes.ok || !snapshotVerification.valid) {
+              gatewayError = snapshotVerification.valid
+                ? `Gateway verification returned HTTP ${verifyRes.status}.`
+                : snapshotVerification.reason;
+              console.error('NOWPayments invoice verification failed:', gatewayError);
+            } else {
+              payAddress = String(verifiedPayment.pay_address).trim();
+              payAmountCrypto = String(verifiedPayment.pay_amount);
+              cryptoRate = verifiedPayment.price_amount && verifiedPayment.pay_amount
+                ? String(Number(verifiedPayment.price_amount) / Number(verifiedPayment.pay_amount))
+                : '1';
+              actualPaymentId = candidatePaymentId;
+            }
+          }
         } else if (nowPayData && (nowPayData.message || nowPayData.error)) {
           gatewayError = nowPayData.message || nowPayData.error;
           console.error('NOWPayments API Error:', gatewayError);
@@ -1347,7 +1419,7 @@ app.post('/checkout/create', async (c) => {
           usdToCents(finalTotal),
           expiresAtStr,
           'waiting',
-          'nowpayments_ipn',
+          'nowpayments_api_double_verified',
         ),
       ]);
     } catch (dbErr) {
@@ -1377,6 +1449,8 @@ app.post('/checkout/create', async (c) => {
         totalUsd: finalTotal,
         payAmountCrypto,
         payAddress,
+        addressVerified: true,
+        verificationSource: 'nowpayments_api_double_verified',
         expiresAt: expiresAtStr,
         status: 'waiting',
         warning: `Send USDT on the ${networkConfig.full_label} network only. Sending other tokens or using a different network will result in permanent loss.`,
@@ -1586,7 +1660,7 @@ app.post('/webhooks/crypto', async (c) => {
     }
 
     const paymentRec = await db.prepare(
-      `SELECT id, order_id, currency, network_id, provider_currency, status,
+      `SELECT id, order_id, currency, network_id, provider_currency, pay_address, status,
               pay_amount_crypto, pay_amount_crypto_text, expected_price_usd_cents
        FROM crypto_payments WHERE id = ? AND order_id = ?`
     ).bind(String(payment_id), String(order_id)).first();
@@ -2788,8 +2862,32 @@ app.post('/admin/payments/:id/sync', adminAuthMiddleware, async (c) => {
     });
 
     const nowPayData = await nowPayCheck.json();
-    if (!nowPayData || !nowPayData.payment_status) {
+    if (!nowPayCheck.ok || !nowPayData || !nowPayData.payment_status) {
       return c.json({ success: false, error: nowPayData?.message || 'Gateway returned empty response.' }, 502);
+    }
+
+    const order = await db.prepare(
+      `SELECT id, total_usd, total_usd_cents, delivery_method FROM orders WHERE id = ?`
+    ).bind(payment.order_id).first();
+    const snapshotVerification = verifyProviderInvoiceSnapshot(nowPayData, {
+      paymentId: payment.id,
+      orderId: payment.order_id,
+      payAddress: payment.pay_address,
+      providerCurrency: payment.provider_currency,
+      cryptoAmount: payment.pay_amount_crypto_text || payment.pay_amount_crypto,
+      usdCents: Number(order?.total_usd_cents ?? usdToCents(order?.total_usd)),
+    });
+    if (!order || !snapshotVerification.valid) {
+      await db.prepare(
+        `UPDATE crypto_payments
+         SET status = 'review_required', verification_source = 'reconciliation_failed', updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`
+      ).bind(actualPayId).run();
+      return c.json({
+        success: false,
+        error: snapshotVerification.valid ? 'Stored order was not found.' : snapshotVerification.reason,
+        status: 'review_required',
+      }, 409);
     }
 
     const liveStatus = String(nowPayData.payment_status).toLowerCase();
@@ -2801,9 +2899,6 @@ app.post('/admin/payments/:id/sync', adminAuthMiddleware, async (c) => {
       ).bind(liveStatus, liveTxHash, actualPayId).run();
 
       if (['confirmed', 'finished', 'paid'].includes(liveStatus)) {
-        const order = await db.prepare(
-          `SELECT id, total_usd, total_usd_cents, delivery_method FROM orders WHERE id = ?`
-        ).bind(payment.order_id).first();
         const reconciliation = reconcileProviderPayment(nowPayData, payment, order);
         if (!reconciliation.valid) {
           await db.prepare(

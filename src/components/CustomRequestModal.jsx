@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import './CustomRequestModal.css';
 
 export default function CustomRequestModal({ isOpen, onClose, requestType }) {
@@ -14,6 +14,8 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
   const [referenceId, setReferenceId] = useState(null);
   const [errorMessage, setErrorMessage] = useState(null);
   const [focusedField, setFocusedField] = useState(null);
+  const dialogRef = useRef(null);
+  const closeButtonRef = useRef(null);
 
   // Update type if prop changes
   useEffect(() => {
@@ -25,7 +27,7 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
   // Reset form on open/close
   useEffect(() => {
     if (!isOpen) {
-      setTimeout(() => {
+      const resetTimer = setTimeout(() => {
         setFormData({ name: '', email: '', type: requestType || 'flow', details: '' });
         setIsSuccess(false);
         setIsSubmitting(false);
@@ -33,8 +35,40 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
         setErrorMessage(null);
         setFocusedField(null);
       }, 300);
+      return () => clearTimeout(resetTimer);
     }
+    return undefined;
   }, [isOpen, requestType]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const previousFocus = document.activeElement;
+    document.body.style.overflow = 'hidden';
+    closeButtonRef.current?.focus();
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') onClose();
+      if (event.key === 'Tab') {
+        const controls = dialogRef.current?.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href]');
+        if (!controls?.length) return;
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+      previousFocus?.focus?.();
+    };
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -103,7 +137,7 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
 
   return (
     <div className="custom-request-overlay" onClick={onClose}>
-      <div className="custom-request-container" onClick={e => e.stopPropagation()}>
+      <div ref={dialogRef} className="custom-request-container" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="custom-request-title">
         
         {/* Left: Dynamic Visual Panel */}
         <div className={`visual-panel ${isFlow ? 'theme-flow' : 'theme-consulting'}`}>
@@ -116,7 +150,7 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
 
           <div className="visual-content">
             <div className="badge">{isFlow ? 'Custom Development' : 'Expert Guidance'}</div>
-            <h2>{isFlow ? 'Architect Your Vision.' : 'Strategic Growth.'}</h2>
+            <h2 id="custom-request-title">{isFlow ? 'Build the flow your operation needs.' : 'Get a clear automation plan.'}</h2>
             <p>
               {isFlow 
                 ? 'Tell us what you want to build. From custom automation to complete workflows, we bring your ideas to life with precision.' 
@@ -127,7 +161,7 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
 
         {/* Right: Interactive Form Panel */}
         <div className="form-panel">
-          <button className="panel-close-btn" onClick={onClose} aria-label="Close modal">
+          <button ref={closeButtonRef} className="panel-close-btn" onClick={onClose} aria-label="Close modal">
             <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2" fill="none">
               <line x1="18" y1="6" x2="6" y2="18"></line>
               <line x1="6" y1="6" x2="18" y2="18"></line>

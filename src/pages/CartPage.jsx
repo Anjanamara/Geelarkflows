@@ -5,7 +5,7 @@ import CheckoutProgress from '../components/CheckoutProgress';
 import './CartPage.css';
 
 export default function CartPage({ navigate }) {
-  const { cart, removeFromCart, updateQuantity, clearCart, addToCart, cartTotal, cartItemCount } = useCart();
+  const { cart, removeFromCart, clearCart, addToCart, cartTotal, cartItemCount } = useCart();
   const [addedItemIds, setAddedItemIds] = useState([]);
 
   // Compute recommendations from catalog (excluding items already in cart)
@@ -61,7 +61,9 @@ export default function CartPage({ navigate }) {
               handleContinueShopping();
             }}
           >
-            <span className="brand-mark">GF</span>
+            <span className="brand-mark" aria-hidden="true">
+              <img src="/logo-mark.svg" alt="" width="42" height="42" />
+            </span>
             <span className="brand-text">
               <strong>GeeLark</strong>
               <small>Flows</small>
@@ -130,8 +132,7 @@ export default function CartPage({ navigate }) {
                 {/* Workflow Cards List */}
                 <div className="cart-workflow-list">
                   {cart.map((item) => {
-                    const itemQuantity = item.quantity || 1;
-                    const itemSubtotal = item.price * itemQuantity;
+                    const itemSubtotal = item.price;
                     const platformName = item.platform || 'GeeLark';
 
                     return (
@@ -159,12 +160,6 @@ export default function CartPage({ navigate }) {
                               </span>
 
                               <div className="workflow-actions-right">
-                                {itemQuantity > 1 && (
-                                  <span className="workflow-unit-price font-mono">
-                                    (${item.price} each)
-                                  </span>
-                                )}
-
                                 <button
                                   type="button"
                                   className="btn-remove-item"

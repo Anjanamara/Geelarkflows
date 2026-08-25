@@ -107,6 +107,23 @@ for (const product of products) {
           availability: 'https://schema.org/InStock',
         },
       },
+      {
+        '@type': 'BreadcrumbList',
+        itemListElement: [
+          {
+            '@type': 'ListItem',
+            position: 1,
+            name: 'GeeLark Flows',
+            item: `${siteUrl}/`,
+          },
+          {
+            '@type': 'ListItem',
+            position: 2,
+            name: product.title,
+            item: canonicalUrl,
+          },
+        ],
+      },
     ],
   };
 
@@ -176,8 +193,8 @@ async function generateStaticPage({ subPath, title, description, h1, bodyText })
 // Generate Static Prerenders
 await generateStaticPage({
   subPath: 'contact',
-  title: 'Contact Support & Help | GeeLark Flows',
-  description: 'Contact GeeLark Flows support for order assistance, crypto payment confirmation, GeeLark setup coordination, or custom RPA workflow development.',
+  title: 'Contact GeeLark Flow Automation Specialists | GeeLark Flows',
+  description: 'Contact GeeLark Flows for reusable mobile automation, custom RPA development, account operations, setup, and technical support.',
   h1: 'Contact GeeLark Flows Support',
   bodyText: 'Direct assistance for orders, GeeLark setup coordination, and custom automation engineering.',
 });

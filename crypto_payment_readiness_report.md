@@ -1,5 +1,7 @@
 # Crypto Payment Integration Readiness Report
 
+> **Archived historical assessment (August 18, 2026).** The payment backend, D1 persistence, NOWPayments integration, signed webhooks, private checkout status, and R2 fulfillment described here as future work have since been implemented. Use `README.md`, `src/worker.js`, and the current test suites as the authoritative references.
+
 **Project**: GeeLark Flows Marketplace  
 **Date**: August 18, 2026  
 **Status**: Initial Architecture & Readiness Assessment  

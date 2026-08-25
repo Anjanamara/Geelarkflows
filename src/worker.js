@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { products } from './data/products.js';
+import { DEFAULT_NETWORK_ID, USDT_NETWORKS, getNetworkConfig } from './data/paymentConfig.js';
 
 const app = new Hono();
 
@@ -19,71 +20,15 @@ const AUTHORITATIVE_CATALOG_MAP = new Map(
   ])
 );
 
-/**
- * Authoritative Supported USDT Payment Networks Configuration
- */
-const SUPPORTED_USDT_NETWORKS = {
-  trc20: {
-    id: 'trc20',
-    asset: 'USDT',
-    network: 'TRC-20',
-    blockchain: 'TRON',
-    nowpayments_currency: 'usdttrc20',
-    display_currency: 'USDT (TRC-20)',
-    full_label: 'TRC-20 / TRON',
-    min_amount_usd: 5,
-    explorer_base: 'https://tronscan.org/#/transaction/',
-    address_explorer: 'https://tronscan.org/#/address/',
-  },
-  erc20: {
-    id: 'erc20',
-    asset: 'USDT',
-    network: 'ERC-20',
-    blockchain: 'Ethereum',
-    nowpayments_currency: 'usdterc20',
-    display_currency: 'USDT (ERC-20)',
-    full_label: 'ERC-20 / Ethereum',
-    min_amount_usd: 15,
-    explorer_base: 'https://etherscan.io/tx/',
-    address_explorer: 'https://etherscan.io/address/',
-  },
-  bep20: {
-    id: 'bep20',
-    asset: 'USDT',
-    network: 'BEP-20',
-    blockchain: 'BNB Smart Chain',
-    nowpayments_currency: 'usdtbsc',
-    display_currency: 'USDT (BEP-20)',
-    full_label: 'BEP-20 / BNB Chain',
-    min_amount_usd: 5,
-    explorer_base: 'https://bscscan.com/tx/',
-    address_explorer: 'https://bscscan.com/address/',
-  },
-  sol: {
-    id: 'sol',
-    asset: 'USDT',
-    network: 'SOL',
-    blockchain: 'Solana',
-    nowpayments_currency: 'usdtsol',
-    display_currency: 'USDT (SOL)',
-    full_label: 'SOL / Solana',
-    min_amount_usd: 5,
-    explorer_base: 'https://solscan.io/tx/',
-    address_explorer: 'https://solscan.io/account/',
-  },
-};
-
 function resolvePaymentNetwork(networkInput) {
-  if (!networkInput) return SUPPORTED_USDT_NETWORKS['trc20'];
-  const cleanKey = String(networkInput).toLowerCase().replace(/[^a-z0-9]/g, '');
-  return SUPPORTED_USDT_NETWORKS[cleanKey] || null;
+  return getNetworkConfig(networkInput || DEFAULT_NETWORK_ID);
 }
 
 // ----------------------------------------------------
 // SECURITY & CRYPTO HELPERS (WebCrypto Native)
 // ----------------------------------------------------
 
-const PBKDF2_ITERATIONS = 100000;
+const PBKDF2_ITERATIONS = 600000;
 const HASH_ALGO_PREFIX = 'pbkdf2_sha256';
 
 function uint8ArrayToHex(buffer) {
@@ -176,6 +121,122 @@ async function verifyPassword(password, storedHash) {
 function generateSecureToken(byteLength = 32) {
   const bytes = crypto.getRandomValues(new Uint8Array(byteLength));
   return uint8ArrayToHex(bytes);
+}
+
+function isValidEmail(value) {
+  if (typeof value !== 'string' || value.length > 254) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+function usdToCents(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  return Math.round(amount * 100);
+}
+
+function normalizeCurrency(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function decimalToScaledBigInt(value, scale = 18) {
+  const raw = String(value ?? '').trim();
+  if (!/^\d+(?:\.\d+)?$/.test(raw)) return null;
+  const [whole, fraction = ''] = raw.split('.');
+  const normalizedFraction = `${fraction}${'0'.repeat(scale)}`.slice(0, scale);
+  return (BigInt(whole) * (10n ** BigInt(scale))) + BigInt(normalizedFraction || '0');
+}
+
+function isDecimalAtLeast(actual, expected) {
+  const actualScaled = decimalToScaledBigInt(actual);
+  const expectedScaled = decimalToScaledBigInt(expected);
+  return actualScaled !== null && expectedScaled !== null && actualScaled >= expectedScaled;
+}
+
+function getSiteOrigin(env) {
+  const configured = String(env?.SITE_URL || 'https://geelarkflows.com').trim();
+  try {
+    const url = new URL(configured);
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('unsupported protocol');
+    return url.origin;
+  } catch (err) {
+    throw new Error('SITE_URL must be configured as an absolute HTTP(S) origin.');
+  }
+}
+
+function getFlowAssetKey(productId) {
+  if (!AUTHORITATIVE_CATALOG_MAP.has(productId)) return null;
+  return `flows/${productId}.zip`;
+}
+
+function reconcileProviderPayment(payload, payment, order) {
+  if (!payment || !order) {
+    return { valid: false, reason: 'The signed event does not match a stored invoice and order.' };
+  }
+
+  if (String(payload.payment_id || '') !== String(payment.id) || String(payload.order_id || '') !== String(order.id)) {
+    return { valid: false, reason: 'Provider payment or order identifier mismatch.' };
+  }
+
+  const network = resolvePaymentNetwork(payment.network_id || payment.provider_currency || payment.currency);
+  const expectedCurrency = normalizeCurrency(payment.provider_currency || network?.nowpayments_currency);
+  const actualCurrency = normalizeCurrency(payload.pay_currency);
+  if (!expectedCurrency || !actualCurrency || expectedCurrency !== actualCurrency) {
+    return { valid: false, reason: 'Payment currency or blockchain does not match the stored invoice.' };
+  }
+
+  const expectedCrypto = payment.pay_amount_crypto_text || payment.pay_amount_crypto;
+  const actualCrypto = payload.actually_paid;
+  if (!isDecimalAtLeast(actualCrypto, expectedCrypto)) {
+    return { valid: false, reason: 'The received cryptocurrency amount is below the stored invoice amount.' };
+  }
+
+  const expectedUsdCents = Number(order.total_usd_cents ?? usdToCents(order.total_usd));
+  const providerUsdCents = usdToCents(payload.price_amount);
+  if (!Number.isInteger(expectedUsdCents) || providerUsdCents !== expectedUsdCents || normalizeCurrency(payload.price_currency) !== 'usd') {
+    return { valid: false, reason: 'Provider USD price does not match the stored order total.' };
+  }
+
+  return { valid: true };
+}
+
+async function enforceCheckoutStatusRateLimit(db, statusTokenHash) {
+  const key = `checkout_status:${statusTokenHash}`;
+  const row = await db.prepare(
+    `INSERT INTO api_rate_limits (key, window_started_at, request_count)
+     VALUES (?, CURRENT_TIMESTAMP, 1)
+     ON CONFLICT(key) DO UPDATE SET
+       request_count = CASE
+         WHEN window_started_at <= datetime('now', '-60 seconds') THEN 1
+         ELSE request_count + 1
+       END,
+       window_started_at = CASE
+         WHEN window_started_at <= datetime('now', '-60 seconds') THEN CURRENT_TIMESTAMP
+         ELSE window_started_at
+       END
+     RETURNING request_count`
+  ).bind(key).first();
+
+  return Number(row?.request_count || 0) <= 12;
+}
+
+async function enforceCheckoutCreationRateLimit(db, ipHash) {
+  const key = `checkout_create:${ipHash}`;
+  const row = await db.prepare(
+    `INSERT INTO api_rate_limits (key, window_started_at, request_count)
+     VALUES (?, CURRENT_TIMESTAMP, 1)
+     ON CONFLICT(key) DO UPDATE SET
+       request_count = CASE
+         WHEN window_started_at <= datetime('now', '-15 minutes') THEN 1
+         ELSE request_count + 1
+       END,
+       window_started_at = CASE
+         WHEN window_started_at <= datetime('now', '-15 minutes') THEN CURRENT_TIMESTAMP
+         ELSE window_started_at
+       END
+     RETURNING request_count`
+  ).bind(key).first();
+
+  return Number(row?.request_count || 0) <= 10;
 }
 
 /**
@@ -716,25 +777,30 @@ async function sendPaymentConfirmationEmail({
 }
 
 /**
- * Send Digital Assets Package via Resend API (Outbound)
+ * Send secure per-product download links or setup onboarding via Resend.
  */
-async function sendFulfillmentEmail({ resendApiKey, customerEmail, orderId, networkLabel, items, attachmentBuffer, fileName }) {
+async function sendFulfillmentEmail({
+  resendApiKey,
+  customerEmail,
+  orderId,
+  networkLabel,
+  items,
+  downloadLinks = [],
+  deliveryMethod = 'download_package',
+}) {
   if (!resendApiKey) {
     throw new Error('RESEND_API_KEY secret is missing in Cloudflare Workers environment bindings.');
   }
 
-  let attachments = [];
-  if (attachmentBuffer) {
-    const base64Content = btoa(
-      new Uint8Array(attachmentBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-    );
-    attachments.push({
-      filename: fileName || `geelark_flow_package_${orderId}.zip`,
-      content: base64Content,
-    });
-  }
-
   const itemsHtml = items.map((i) => `<li><strong>${i.title}</strong> (${i.platform || 'GeeLark'}) — $${i.price}</li>`).join('');
+  const isSetup = deliveryMethod === 'geelark_setup';
+  const linksHtml = downloadLinks.map((link) => `
+    <p style="margin: 10px 0;">
+      <a href="${link.url}" style="display: inline-block; background: #A7FF4F; color: #0c0f0d; padding: 10px 14px; border-radius: 6px; font-weight: 700; text-decoration: none;">
+        Download ${link.title}
+      </a>
+    </p>
+  `).join('');
   const fromEmail = 'GeeLark Flows <noreply@geelarkflows.com>';
 
   const response = await fetch('https://api.resend.com/emails', {
@@ -746,12 +812,16 @@ async function sendFulfillmentEmail({ resendApiKey, customerEmail, orderId, netw
     body: JSON.stringify({
       from: fromEmail,
       to: [customerEmail],
-      subject: `Your GeeLark Automation Package (Order #${orderId})`,
+      subject: isSetup
+        ? `Your GeeLark setup is being prepared (Order #${orderId})`
+        : `Your GeeLark flow downloads (Order #${orderId})`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #0c0f0d; color: #f1f3f1; padding: 28px; border-radius: 8px; border: 1px solid #222924;">
-          <h2 style="color: #A7FF4F; margin-top: 0; font-size: 20px;">GeeLark Flows — Purchase Delivered</h2>
+          <h2 style="color: #A7FF4F; margin-top: 0; font-size: 20px;">${isSetup ? 'GeeLark Setup — Onboarding Started' : 'GeeLark Flows — Secure Delivery'}</h2>
           <p style="color: #c0c6c2; font-size: 14px; line-height: 1.5;">
-            Thank you! Your package has been prepared and is attached below.
+            ${isSetup
+              ? 'Your setup request is now in progress. Our team will contact you with the secure onboarding steps.'
+              : 'Your purchased flows are available through the private links below. Links expire after seven days; the flows remain reusable after download.'}
           </p>
           <div style="background: #141815; padding: 16px; border-radius: 6px; margin: 20px 0; border: 1px solid #232a25;">
             <p style="margin: 0 0 6px 0; font-size: 12px; color: #828c85; font-family: monospace;">ORDER ID: <strong>${orderId}</strong></p>
@@ -760,12 +830,12 @@ async function sendFulfillmentEmail({ resendApiKey, customerEmail, orderId, netw
               ${itemsHtml}
             </ul>
           </div>
+          ${isSetup ? '' : `<div style="margin: 20px 0;">${linksHtml}</div>`}
           <p style="color: #c0c6c2; font-size: 14px; line-height: 1.5;">
             For setup assistance or technical support, contact <a href="mailto:support@geelarkflows.com" style="color: #a7ff4f;">support@geelarkflows.com</a>.
           </p>
         </div>
       `,
-      attachments,
     }),
   });
 
@@ -916,7 +986,7 @@ async function recordAuditLog(db, {
 // ----------------------------------------------------
 
 async function checkLoginRateLimit(db, ip, email) {
-  if (!db) return { allowed: true };
+  if (!db) return { allowed: false, statusCode: 503, reason: 'Login protection is temporarily unavailable.' };
   try {
     const keys = [];
     if (ip) keys.push(`ip:${ip}`);
@@ -938,8 +1008,8 @@ async function checkLoginRateLimit(db, ip, email) {
     }
     return { allowed: true };
   } catch (err) {
-    console.warn('Rate limit check warning:', err.message);
-    return { allowed: true };
+    console.error('Rate limit check failed closed:', err.message);
+    return { allowed: false, statusCode: 503, reason: 'Login protection is temporarily unavailable.' };
   }
 }
 
@@ -997,6 +1067,13 @@ function parseCookies(header) {
 async function adminAuthMiddleware(c, next) {
   const method = c.req.method.toUpperCase();
   if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(method)) {
+    const origin = c.req.header('origin');
+    const fetchSite = c.req.header('sec-fetch-site');
+    const requestOrigin = new URL(c.req.url).origin;
+    if ((origin && origin !== requestOrigin) || fetchSite === 'cross-site') {
+      return c.json({ success: false, error: 'Forbidden: Cross-origin admin action rejected.' }, 403);
+    }
+
     const actionHeader = c.req.header('x-admin-action');
     if (actionHeader !== '1') {
       return c.json({ success: false, error: 'Forbidden: Missing or invalid CSRF authorization header (X-Admin-Action: 1 required).' }, 403);
@@ -1089,10 +1166,43 @@ const ALLOWED_ORDER_TRANSITIONS = {
 // POST /api/checkout/create
 app.post('/checkout/create', async (c) => {
   try {
-    const body = await c.req.json();
+    const db = c.env?.DB;
+    if (!db || typeof db.batch !== 'function') {
+      return c.json({ success: false, error: 'Checkout is temporarily unavailable. Please try again shortly.' }, 503);
+    }
+
+    const clientIp = c.req.header('cf-connecting-ip');
+    if (clientIp) {
+      try {
+        const ipHash = await sha256Hex(clientIp);
+        if (!(await enforceCheckoutCreationRateLimit(db, ipHash))) {
+          c.header('Retry-After', '900');
+          return c.json({
+            success: false,
+            error: 'Too many checkout attempts. Please wait a few minutes before creating another invoice.',
+          }, 429);
+        }
+      } catch (rateErr) {
+        console.error('Checkout creation rate limit failed closed:', rateErr.message);
+        return c.json({
+          success: false,
+          error: 'Checkout protection is temporarily unavailable. Please try again shortly.',
+        }, 503);
+      }
+    }
+
+    let body;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ success: false, error: 'Invalid JSON payload format.' }, 400);
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return c.json({ success: false, error: 'Request body must be a JSON object.' }, 400);
+    }
     const { email, network, payment_network, delivery_method, deliveryMethod, cart = [] } = body;
 
-    if (!email || typeof email !== 'string' || !email.includes('@') || email.trim().length < 5) {
+    if (!isValidEmail(email)) {
       return c.json({ success: false, error: 'Please enter a valid email address.' }, 400);
     }
     const cleanEmail = email.toLowerCase().trim();
@@ -1132,12 +1242,14 @@ app.post('/checkout/create', async (c) => {
       }, 400);
     }
 
-    const orderId = 'ord_' + crypto.randomUUID().split('-')[0];
-    const paymentId = 'pay_' + crypto.randomUUID().split('-')[0];
+    const orderId = 'ord_' + generateSecureToken(16);
+    const paymentId = 'pay_' + generateSecureToken(16);
+    const statusToken = generateSecureToken(32);
+    const statusTokenHash = await sha256Hex(statusToken);
 
     let payAddress = '';
-    let payAmountCrypto = Number(finalTotal.toFixed(2));
-    let cryptoRate = 1.0;
+    let payAmountCrypto = finalTotal.toFixed(2);
+    let cryptoRate = '1';
     let actualPaymentId = paymentId;
     let gatewayError = null;
 
@@ -1145,15 +1257,7 @@ app.post('/checkout/create', async (c) => {
 
     if (apiKey) {
       try {
-        let requestOrigin = 'https://geelarkflows.com';
-        try {
-          if (c.req.url) {
-            const parsedUrl = new URL(c.req.url);
-            if (parsedUrl.protocol.startsWith('http') && !parsedUrl.hostname.includes('localhost') && !parsedUrl.hostname.includes('127.0.0.1')) {
-              requestOrigin = parsedUrl.origin;
-            }
-          }
-        } catch (urlErr) {}
+        const requestOrigin = getSiteOrigin(c.env);
 
         const nowPayRes = await fetch('https://api.nowpayments.io/v1/payment', {
           method: 'POST',
@@ -1172,16 +1276,20 @@ app.post('/checkout/create', async (c) => {
         });
 
         const nowPayData = await nowPayRes.json();
-        if (nowPayData && nowPayData.pay_address) {
+        const providerAmount = decimalToScaledBigInt(nowPayData?.pay_amount);
+        const providerCurrencyMatches = normalizeCurrency(nowPayData?.pay_currency) === normalizeCurrency(networkConfig.nowpayments_currency);
+        if (nowPayData?.pay_address && nowPayData?.payment_id && providerAmount !== null && providerAmount > 0n && providerCurrencyMatches) {
           payAddress = nowPayData.pay_address;
-          payAmountCrypto = Number(nowPayData.pay_amount || finalTotal);
-          cryptoRate = nowPayData.price_amount && nowPayData.pay_amount ? (nowPayData.price_amount / nowPayData.pay_amount) : 1.0;
-          if (nowPayData.payment_id) {
-            actualPaymentId = String(nowPayData.payment_id);
-          }
+          payAmountCrypto = String(nowPayData.pay_amount || finalTotal);
+          cryptoRate = nowPayData.price_amount && nowPayData.pay_amount
+            ? String(Number(nowPayData.price_amount) / Number(nowPayData.pay_amount))
+            : '1';
+          actualPaymentId = String(nowPayData.payment_id);
         } else if (nowPayData && (nowPayData.message || nowPayData.error)) {
           gatewayError = nowPayData.message || nowPayData.error;
           console.error('NOWPayments API Error:', gatewayError);
+        } else {
+          gatewayError = 'Gateway response did not contain a valid payment ID, network, amount, and receiving address.';
         }
       } catch (gateErr) {
         gatewayError = gateErr.message;
@@ -1200,18 +1308,54 @@ app.post('/checkout/create', async (c) => {
 
     const expiresAtStr = new Date(Date.now() + 30 * 60 * 1000).toISOString();
 
-    if (c.env && c.env.DB) {
-      try {
-        await c.env.DB.prepare(
-          'INSERT INTO orders (id, customer_email, total_usd, delivery_method, workflow_subtotal, setup_fee, status, items, fulfillment_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        ).bind(orderId, cleanEmail, finalTotal, selectedDeliveryMethod, workflowSubtotal, setupFee, 'pending', JSON.stringify(resolvedCart), 'not_ready').run();
-
-        await c.env.DB.prepare(
-          'INSERT INTO crypto_payments (id, order_id, currency, pay_address, pay_amount_crypto, exchange_rate_usd, expires_at, status, verification_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        ).bind(actualPaymentId, orderId, networkConfig.display_currency, payAddress, payAmountCrypto, cryptoRate, expiresAtStr, 'waiting', 'nowpayments_ipn').run();
-      } catch (dbErr) {
-        console.warn('D1 Database store notice:', dbErr.message);
-      }
+    try {
+      await db.batch([
+        db.prepare(
+          `INSERT INTO orders
+           (id, customer_email, total_usd, total_usd_cents, delivery_method, workflow_subtotal, workflow_subtotal_cents, setup_fee, setup_fee_cents, status, items, fulfillment_status, status_token_hash)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+          orderId,
+          cleanEmail,
+          finalTotal,
+          usdToCents(finalTotal),
+          selectedDeliveryMethod,
+          workflowSubtotal,
+          usdToCents(workflowSubtotal),
+          setupFee,
+          usdToCents(setupFee),
+          'awaiting_payment',
+          JSON.stringify(resolvedCart),
+          'not_ready',
+          statusTokenHash,
+        ),
+        db.prepare(
+          `INSERT INTO crypto_payments
+           (id, order_id, currency, network_id, provider_currency, pay_address, pay_amount_crypto, pay_amount_crypto_text, exchange_rate_usd, exchange_rate_usd_text, expected_price_usd_cents, expires_at, status, verification_source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+          actualPaymentId,
+          orderId,
+          networkConfig.display_currency,
+          networkConfig.id,
+          networkConfig.nowpayments_currency,
+          payAddress,
+          Number(payAmountCrypto),
+          payAmountCrypto,
+          Number(cryptoRate),
+          cryptoRate,
+          usdToCents(finalTotal),
+          expiresAtStr,
+          'waiting',
+          'nowpayments_ipn',
+        ),
+      ]);
+    } catch (dbErr) {
+      console.error(`Checkout persistence failed for ${orderId}:`, dbErr.message);
+      return c.json({
+        success: false,
+        error: 'We could not safely save this invoice. No payment should be sent; please create a new checkout.',
+      }, 503);
     }
 
     return c.json({
@@ -1219,6 +1363,7 @@ app.post('/checkout/create', async (c) => {
       data: {
         orderId,
         paymentId: actualPaymentId,
+        statusToken,
         asset: 'USDT',
         network: networkConfig.id,
         networkLabel: networkConfig.network,
@@ -1233,14 +1378,13 @@ app.post('/checkout/create', async (c) => {
         payAmountCrypto,
         payAddress,
         expiresAt: expiresAtStr,
-        qrCodeUrl: `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(payAddress)}`,
         status: 'waiting',
         warning: `Send USDT on the ${networkConfig.full_label} network only. Sending other tokens or using a different network will result in permanent loss.`,
       },
     });
   } catch (err) {
     console.error('Checkout creation error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'Checkout could not be created. Please try again shortly.' }, 500);
   }
 });
 
@@ -1436,62 +1580,123 @@ app.post('/webhooks/crypto', async (c) => {
     const normalizedStatus = String(payment_status || '').toLowerCase();
     const finalTxHash = outcome_tx_hash || txid || null;
 
-    if (c.env && c.env.DB && order_id) {
-      const paymentRec = await c.env.DB.prepare(
-        'SELECT id, currency, status FROM crypto_payments WHERE order_id = ? OR id = ?'
-      ).bind(order_id, String(payment_id)).first();
+    const db = c.env?.DB;
+    if (!db || !order_id || !payment_id || !normalizedStatus) {
+      return c.json({ success: false, error: 'Webhook is missing required invoice identifiers or status.' }, 400);
+    }
 
-      const orderRec = await c.env.DB.prepare(
-        'SELECT id, customer_email, status, items, total_usd, delivery_method, workflow_subtotal, setup_fee FROM orders WHERE id = ?'
-      ).bind(order_id).first();
+    const paymentRec = await db.prepare(
+      `SELECT id, order_id, currency, network_id, provider_currency, status,
+              pay_amount_crypto, pay_amount_crypto_text, expected_price_usd_cents
+       FROM crypto_payments WHERE id = ? AND order_id = ?`
+    ).bind(String(payment_id), String(order_id)).first();
 
-      if (['confirmed', 'finished', 'paid'].includes(normalizedStatus)) {
-        await c.env.DB.prepare(
-          'UPDATE crypto_payments SET status = ?, tx_hash = ?, verification_source = ?, updated_at = CURRENT_TIMESTAMP WHERE order_id = ? OR id = ?'
-        ).bind(normalizedStatus, finalTxHash, 'nowpayments_ipn', order_id, String(payment_id)).run();
+    const orderRec = await db.prepare(
+      `SELECT id, customer_email, status, items, total_usd, total_usd_cents,
+              delivery_method, workflow_subtotal, setup_fee
+       FROM orders WHERE id = ?`
+    ).bind(String(order_id)).first();
 
-        const initialFulfillmentStatus = (orderRec?.delivery_method === 'geelark_setup') ? 'setup_pending' : 'fulfillment_pending';
+    if (!paymentRec || !orderRec) {
+      console.warn(`NOWPayments event did not match a stored invoice: order=${order_id}, payment=${payment_id}`);
+      return c.json({ success: true, status: 'ignored_unmatched_invoice' });
+    }
 
-        await c.env.DB.prepare(
-          'UPDATE orders SET status = ?, fulfillment_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-        ).bind('paid', initialFulfillmentStatus, order_id).run();
+    if (['confirmed', 'finished', 'paid'].includes(normalizedStatus)) {
+      const reconciliation = reconcileProviderPayment(payload, paymentRec, orderRec);
+      if (!reconciliation.valid) {
+        await db.prepare(
+          `UPDATE crypto_payments
+           SET status = 'review_required', verification_source = 'reconciliation_failed', updated_at = CURRENT_TIMESTAMP
+           WHERE id = ? AND order_id = ?`
+        ).bind(paymentRec.id, orderRec.id).run();
+        console.error(`NOWPayments reconciliation failed for ${orderRec.id}: ${reconciliation.reason}`);
+        return c.json({ success: true, status: 'manual_review' });
+      }
 
-        if (orderRec && orderRec.status !== 'paid' && orderRec.status !== 'completed') {
-          let parsedItems = [];
-          try {
-            parsedItems = JSON.parse(orderRec.items || '[]');
-          } catch (e) {}
+      const initialFulfillmentStatus = orderRec.delivery_method === 'geelark_setup'
+        ? 'setup_pending'
+        : 'fulfillment_pending';
 
-          const idempotencyKey = `auto_confirm_email_${order_id}_${payment_id}`;
+      await db.batch([
+        db.prepare(
+          `UPDATE crypto_payments
+           SET status = ?, tx_hash = ?, verification_source = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ? AND order_id = ?`
+        ).bind(normalizedStatus, finalTxHash, 'nowpayments_ipn', paymentRec.id, orderRec.id),
+        db.prepare(
+          `UPDATE orders SET status = ?, fulfillment_status = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`
+        ).bind('paid', initialFulfillmentStatus, orderRec.id),
+      ]);
+
+      if (!['paid', 'processing', 'completed'].includes(orderRec.status)) {
+        let parsedItems = [];
+        try {
+          parsedItems = JSON.parse(orderRec.items || '[]');
+        } catch (e) {}
+
+        const idempotencyKey = `payment_confirmation_${orderRec.id}_${paymentRec.id}`;
+        const logId = 'fl_' + generateSecureToken(8);
+        let reserved = false;
+
+        try {
+          await db.prepare(
+            `INSERT INTO order_fulfillment_logs
+             (id, order_id, idempotency_key, triggered_by, recipient_email, status)
+             VALUES (?, ?, ?, ?, ?, 'sending')`
+          ).bind(logId, orderRec.id, idempotencyKey, 'system_webhook', orderRec.customer_email).run();
+          reserved = true;
+        } catch (reserveErr) {
+          console.info(`Duplicate payment confirmation suppressed for ${orderRec.id}.`);
+        }
+
+        if (reserved) {
           try {
             await sendPaymentConfirmationEmail({
               resendApiKey: c.env.RESEND_API_KEY,
               customerEmail: orderRec.customer_email,
-              orderId: order_id,
-              networkLabel: paymentRec?.currency || 'TRC-20',
+              orderId: orderRec.id,
+              networkLabel: paymentRec.currency,
               items: parsedItems,
               deliveryMethod: orderRec.delivery_method || 'download_package',
               workflowSubtotal: orderRec.workflow_subtotal || orderRec.total_usd,
               setupFee: orderRec.setup_fee || 0,
               totalUsd: orderRec.total_usd,
             });
-
-            await c.env.DB.prepare(
-              `INSERT INTO order_fulfillment_logs (id, order_id, idempotency_key, triggered_by, recipient_email, status)
-               VALUES (?, ?, ?, ?, ?, ?)`
-            ).bind('fl_' + generateSecureToken(8), order_id, idempotencyKey, 'system_webhook', orderRec.customer_email, 'dispatched').run();
+            await db.prepare(
+              `UPDATE order_fulfillment_logs SET status = 'dispatched', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+            ).bind(logId).run();
           } catch (emailErr) {
             console.error('Automated payment confirmation email failure:', emailErr.message);
-            await c.env.DB.prepare(
-              `INSERT INTO order_fulfillment_logs (id, order_id, idempotency_key, triggered_by, recipient_email, status, error_message)
-               VALUES (?, ?, ?, ?, ?, ?, ?)`
-            ).bind('fl_' + generateSecureToken(8), order_id, idempotencyKey, 'system_webhook', orderRec.customer_email, 'failed', emailErr.message).run();
+            await db.prepare(
+              `UPDATE order_fulfillment_logs
+               SET status = 'failed', error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+            ).bind(emailErr.message, logId).run();
           }
         }
-      } else if (['failed', 'expired', 'refunded'].includes(normalizedStatus)) {
-        await c.env.DB.prepare(
-          'UPDATE crypto_payments SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE order_id = ? OR id = ?'
-        ).bind(normalizedStatus, order_id, String(payment_id)).run();
+      }
+    } else {
+      const allowedProviderStatuses = ['waiting', 'confirming', 'sending', 'partially_paid', 'failed', 'expired', 'refunded'];
+      if (allowedProviderStatuses.includes(normalizedStatus)) {
+        const updates = [
+          db.prepare(
+            `UPDATE crypto_payments SET status = ?, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ? AND order_id = ?`
+          ).bind(normalizedStatus, paymentRec.id, orderRec.id),
+        ];
+        if (normalizedStatus === 'refunded') {
+          updates.push(
+            db.prepare("UPDATE orders SET status = 'refunded', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+              .bind(orderRec.id)
+          );
+        } else if (['failed', 'expired'].includes(normalizedStatus) && ['pending', 'awaiting_payment'].includes(orderRec.status)) {
+          updates.push(
+            db.prepare("UPDATE orders SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+              .bind(orderRec.id)
+          );
+        }
+        await db.batch(updates);
       }
     }
 
@@ -1672,104 +1877,78 @@ app.post('/webhooks/resend', async (c) => {
 
 // GET /api/checkout/status/:id
 app.get('/checkout/status/:id', async (c) => {
+  c.header('Cache-Control', 'no-store, private');
+  c.header('Pragma', 'no-cache');
+  c.header('X-Content-Type-Options', 'nosniff');
+
   try {
+    const db = c.env?.DB;
+    if (!db) {
+      return c.json({ success: false, error: 'Payment status is temporarily unavailable.' }, 503);
+    }
+
     const id = c.req.param('id');
-    let currentStatus = 'waiting';
-    let txHash = null;
-    let orderStatus = 'pending';
-    let rawCurrency = 'USDT (TRC-20)';
-    let payAddress = '';
-    let payAmount = 0;
-    let orderId = id;
-    let paymentId = id;
-    let isConfirmed = false;
-    let deliveryMethod = 'download_package';
-    let workflowSubtotal = 0;
-    let setupFee = 0;
-    let fulfillmentStatus = 'not_ready';
-    let customerEmail = '';
-
-    if (c.env && c.env.DB) {
-      try {
-        const record = await c.env.DB.prepare(
-          'SELECT id, order_id, currency, pay_address, pay_amount_crypto, status, tx_hash FROM crypto_payments WHERE id = ? OR order_id = ?'
-        ).bind(id, id).first();
-        if (record) {
-          currentStatus = record.status || 'waiting';
-          txHash = record.tx_hash || null;
-          rawCurrency = record.currency || 'USDT (TRC-20)';
-          payAddress = record.pay_address || '';
-          payAmount = record.pay_amount_crypto || 0;
-          paymentId = record.id;
-          orderId = record.order_id;
-        }
-        const orderRec = await c.env.DB.prepare(
-          'SELECT status, total_usd, delivery_method, workflow_subtotal, setup_fee, fulfillment_status, customer_email FROM orders WHERE id = ?'
-        ).bind(orderId).first();
-        if (orderRec) {
-          orderStatus = orderRec.status || 'pending';
-          if (!payAmount && orderRec.total_usd) {
-            payAmount = orderRec.total_usd;
-          }
-          deliveryMethod = orderRec.delivery_method || 'download_package';
-          workflowSubtotal = orderRec.workflow_subtotal || orderRec.total_usd || payAmount;
-          setupFee = orderRec.setup_fee || 0;
-          fulfillmentStatus = orderRec.fulfillment_status || 'not_ready';
-          customerEmail = orderRec.customer_email || '';
-        }
-      } catch (dbErr) {
-        console.warn('D1 Status fetch notice:', dbErr.message);
-      }
+    const statusToken = c.req.header('x-checkout-token');
+    if (!id || !statusToken || statusToken.length < 32 || statusToken.length > 256) {
+      return c.json({ success: false, error: 'Payment status not found.' }, 404);
     }
 
-    isConfirmed = ['confirmed', 'finished', 'paid'].includes((currentStatus || '').toLowerCase()) || orderStatus === 'paid';
+    const payment = await db.prepare(
+      `SELECT id, order_id, currency, network_id, provider_currency, pay_address,
+              COALESCE(pay_amount_crypto_text, CAST(pay_amount_crypto AS TEXT)) AS pay_amount_crypto,
+              status, tx_hash, confirmations, required_confirmations
+       FROM crypto_payments WHERE id = ? OR order_id = ?`
+    ).bind(id, id).first();
 
-    const apiKey = c.env?.NOWPAYMENTS_API_KEY || c.env?.CRYPTO_GATEWAY_API_KEY;
-    const isNumericPaymentId = paymentId && /^\d+$/.test(paymentId);
-    if (apiKey && isNumericPaymentId && !isConfirmed && currentStatus === 'waiting') {
-      try {
-        const nowPayCheck = await fetch(`https://api.nowpayments.io/v1/payment/${paymentId}`, {
-          headers: { 'x-api-key': apiKey }
-        });
-        const nowPayStatusData = await nowPayCheck.json();
-        if (nowPayStatusData && nowPayStatusData.payment_status) {
-          const liveStatus = String(nowPayStatusData.payment_status).toLowerCase();
-          if (['confirmed', 'finished', 'paid'].includes(liveStatus)) {
-            currentStatus = liveStatus;
-            txHash = nowPayStatusData.outcome_tx_hash || nowPayStatusData.txid || txHash;
-            orderStatus = 'paid';
-            isConfirmed = true;
-
-            const initialFulfillmentStatus = (deliveryMethod === 'geelark_setup') ? 'setup_pending' : 'fulfillment_pending';
-            fulfillmentStatus = initialFulfillmentStatus;
-
-            if (c.env && c.env.DB) {
-              await c.env.DB.prepare(
-                'UPDATE crypto_payments SET status = ?, tx_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? OR order_id = ?'
-              ).bind(currentStatus, txHash, paymentId, orderId).run();
-              await c.env.DB.prepare(
-                'UPDATE orders SET status = ?, fulfillment_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-              ).bind('paid', initialFulfillmentStatus, orderId).run();
-            }
-          }
-        }
-      } catch (pollErr) {
-        console.warn('Direct NOWPayments status sync notice:', pollErr.message);
-      }
+    if (!payment) {
+      return c.json({ success: false, error: 'Payment status not found.' }, 404);
     }
 
-    const resolvedNetwork = resolvePaymentNetwork(rawCurrency) || SUPPORTED_USDT_NETWORKS['trc20'];
+    const order = await db.prepare(
+      `SELECT id, status, total_usd, total_usd_cents, delivery_method, workflow_subtotal,
+              workflow_subtotal_cents, setup_fee, setup_fee_cents, fulfillment_status, status_token_hash
+       FROM orders WHERE id = ?`
+    ).bind(payment.order_id).first();
+
+    const suppliedTokenHash = await sha256Hex(statusToken);
+    if (!order?.status_token_hash || !constantTimeCompare(suppliedTokenHash, order.status_token_hash)) {
+      return c.json({ success: false, error: 'Payment status not found.' }, 404);
+    }
+
+    if (!(await enforceCheckoutStatusRateLimit(db, suppliedTokenHash))) {
+      c.header('Retry-After', '60');
+      return c.json({ success: false, error: 'Too many status checks. Please wait before trying again.' }, 429);
+    }
+
+    const resolvedNetwork = resolvePaymentNetwork(payment.network_id || payment.provider_currency || payment.currency);
+    if (!resolvedNetwork) {
+      return c.json({ success: false, error: 'Stored payment network is invalid. Please contact support.' }, 500);
+    }
+
+    const currentStatus = payment.status || 'waiting';
+    const orderStatus = order.status || 'awaiting_payment';
+    const isConfirmed = ['confirmed', 'finished', 'paid'].includes(String(currentStatus).toLowerCase())
+      || ['paid', 'processing', 'completed'].includes(orderStatus);
+    const totalUsd = Number.isInteger(order.total_usd_cents)
+      ? order.total_usd_cents / 100
+      : Number(order.total_usd || 0);
+    const workflowSubtotal = Number.isInteger(order.workflow_subtotal_cents)
+      ? order.workflow_subtotal_cents / 100
+      : Number(order.workflow_subtotal || totalUsd);
+    const setupFee = Number.isInteger(order.setup_fee_cents)
+      ? order.setup_fee_cents / 100
+      : Number(order.setup_fee || 0);
 
     return c.json({
       success: true,
       data: {
         id,
-        orderId,
-        paymentId,
+        orderId: order.id,
+        paymentId: payment.id,
         status: currentStatus,
         orderStatus,
         isConfirmed,
-        txHash,
+        txHash: payment.tx_hash || null,
         asset: 'USDT',
         network: resolvedNetwork.id,
         networkLabel: resolvedNetwork.network,
@@ -1777,21 +1956,92 @@ app.get('/checkout/status/:id', async (c) => {
         fullNetworkLabel: resolvedNetwork.full_label,
         currency: resolvedNetwork.display_currency,
         payCurrency: resolvedNetwork.nowpayments_currency.toUpperCase(),
-        deliveryMethod,
+        deliveryMethod: order.delivery_method || 'download_package',
         workflowSubtotal,
         setupFee,
-        totalUsd: payAmount,
-        payAmount,
-        payAddress,
-        customerEmail,
-        fulfillmentStatus,
-        confirmations: isConfirmed ? 2 : 0,
-        requiredConfirmations: 2,
+        totalUsd,
+        payAmount: payment.pay_amount_crypto,
+        payAddress: payment.pay_address,
+        fulfillmentStatus: order.fulfillment_status || 'not_ready',
+        confirmations: Number(payment.confirmations || (isConfirmed ? 2 : 0)),
+        requiredConfirmations: Number(payment.required_confirmations || 2),
       },
     });
   } catch (routeErr) {
     console.error('Status route unhandled error:', routeErr);
-    return c.json({ success: false, error: routeErr.message }, 500);
+    return c.json({ success: false, error: 'Payment status is temporarily unavailable.' }, 500);
+  }
+});
+
+// GET /api/downloads/:token/:productId — private, expiring R2 delivery
+app.get('/downloads/:token/:productId', async (c) => {
+  c.header('Cache-Control', 'no-store, private');
+  c.header('Referrer-Policy', 'no-referrer');
+  c.header('X-Content-Type-Options', 'nosniff');
+
+  const db = c.env?.DB;
+  const bucket = c.env?.FLOWS_BUCKET;
+  if (!db || !bucket) {
+    return c.json({ success: false, error: 'Secure downloads are temporarily unavailable.' }, 503);
+  }
+
+  try {
+    const rawToken = c.req.param('token');
+    const productId = c.req.param('productId');
+    if (!/^[a-f0-9]{64}$/i.test(rawToken || '') || !AUTHORITATIVE_CATALOG_MAP.has(productId)) {
+      return c.json({ success: false, error: 'Download not found or expired.' }, 404);
+    }
+
+    const tokenHash = await sha256Hex(rawToken);
+    const delivery = await db.prepare(
+      `SELECT t.id AS token_id, t.order_id, o.items, o.status
+       FROM order_download_tokens t
+       JOIN orders o ON o.id = t.order_id
+       WHERE t.token_hash = ?
+         AND t.revoked_at IS NULL
+         AND t.expires_at > CURRENT_TIMESTAMP`
+    ).bind(tokenHash).first();
+
+    if (!delivery || !['paid', 'processing', 'completed'].includes(delivery.status)) {
+      return c.json({ success: false, error: 'Download not found or expired.' }, 404);
+    }
+
+    let purchasedItems = [];
+    try {
+      purchasedItems = JSON.parse(delivery.items || '[]');
+    } catch (e) {}
+
+    if (!purchasedItems.some((item) => item.id === productId)) {
+      return c.json({ success: false, error: 'Download not found or expired.' }, 404);
+    }
+
+    const assetKey = getFlowAssetKey(productId);
+    const object = await bucket.get(assetKey);
+    if (!object) {
+      console.error(`Purchased R2 asset is missing: ${assetKey}, order=${delivery.order_id}`);
+      return c.json({ success: false, error: 'This flow is temporarily unavailable. Support has been notified.' }, 503);
+    }
+
+    await db.prepare(
+      `UPDATE order_download_tokens
+       SET download_count = download_count + 1, last_downloaded_at = CURRENT_TIMESTAMP
+       WHERE id = ?`
+    ).bind(delivery.token_id).run();
+
+    const safeFilename = `${productId}.zip`;
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set('Content-Type', headers.get('Content-Type') || 'application/zip');
+    headers.set('Content-Disposition', `attachment; filename="${safeFilename}"`);
+    headers.set('Cache-Control', 'no-store, private');
+    headers.set('Referrer-Policy', 'no-referrer');
+    headers.set('X-Content-Type-Options', 'nosniff');
+    if (object.size) headers.set('Content-Length', String(object.size));
+
+    return new Response(object.body, { status: 200, headers });
+  } catch (err) {
+    console.error('Secure download error:', err.message);
+    return c.json({ success: false, error: 'Secure download could not be completed.' }, 500);
   }
 });
 
@@ -1805,6 +2055,10 @@ app.post('/admin/auth/bootstrap', async (c) => {
   if (!db) return c.json({ success: false, error: 'Database unavailable' }, 500);
 
   try {
+    if (c.env?.ADMIN_BOOTSTRAP_ENABLED !== 'true') {
+      return c.json({ success: false, error: 'Bootstrap is disabled. Enable it only during one-time provisioning.' }, 403);
+    }
+
     const countRow = await db.prepare('SELECT COUNT(*) as count FROM admin_users').first();
     if (countRow && countRow.count > 0) {
       return c.json({ success: false, error: 'Bootstrap disabled: Administrator account already exists.' }, 403);
@@ -1813,13 +2067,28 @@ app.post('/admin/auth/bootstrap', async (c) => {
     const body = await c.req.json();
     const { email, password, bootstrapSecret, name = 'Primary Administrator' } = body;
 
-    const expectedSecret = c.env?.ADMIN_BOOTSTRAP_SECRET || 'geelark_initial_bootstrap_key_2026';
-    if (!bootstrapSecret || bootstrapSecret !== expectedSecret) {
+    const expectedSecret = c.env?.ADMIN_BOOTSTRAP_SECRET;
+    if (!expectedSecret || expectedSecret.length < 32) {
+      return c.json({ success: false, error: 'Bootstrap secret is not securely configured.' }, 503);
+    }
+
+    const suppliedSecretHash = await sha256Hex(String(bootstrapSecret || ''));
+    const expectedSecretHash = await sha256Hex(expectedSecret);
+    if (!constantTimeCompare(suppliedSecretHash, expectedSecretHash)) {
       return c.json({ success: false, error: 'Invalid bootstrap authorization secret.' }, 403);
     }
 
-    if (!email || !password || password.length < 8) {
-      return c.json({ success: false, error: 'Email and password (min 8 characters) are required.' }, 400);
+    const strongPassword = typeof password === 'string'
+      && password.length >= 12
+      && /[a-z]/.test(password)
+      && /[A-Z]/.test(password)
+      && /\d/.test(password)
+      && /[^A-Za-z0-9]/.test(password);
+    if (!isValidEmail(email) || !strongPassword) {
+      return c.json({
+        success: false,
+        error: 'Use a valid email and a password of at least 12 characters containing upper/lowercase letters, a number, and a symbol.',
+      }, 400);
     }
 
     const passwordHash = await hashPassword(password);
@@ -1878,7 +2147,7 @@ app.post('/admin/auth/login', async (c) => {
         entityId: cleanEmail,
         reason: rateCheck.reason,
       });
-      return c.json({ success: false, error: rateCheck.reason }, 429);
+      return c.json({ success: false, error: rateCheck.reason }, rateCheck.statusCode || 429);
     }
 
     const user = await db.prepare(
@@ -1913,12 +2182,22 @@ app.post('/admin/auth/login', async (c) => {
       return c.json({ success: false, error: 'Invalid email or password.' }, 401);
     }
 
+    const storedIterations = Number(String(user.password_hash).split('$')[1] || 0);
+    if (storedIterations > 0 && storedIterations < PBKDF2_ITERATIONS) {
+      const upgradedHash = await hashPassword(password);
+      await db.prepare('UPDATE admin_users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .bind(upgradedHash, user.id)
+        .run();
+    }
+
     await clearLoginRateLimit(db, clientIp, cleanEmail);
+
+    await db.prepare('DELETE FROM admin_sessions WHERE expires_at <= CURRENT_TIMESTAMP').run();
 
     const rawSessionToken = generateSecureToken(32);
     const tokenHash = await sha256Hex(rawSessionToken);
     const sessionId = 'ses_' + generateSecureToken(8);
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
 
     await db.prepare(
       `INSERT INTO admin_sessions (id, token_hash, user_id, ip_address, user_agent, expires_at)
@@ -1937,7 +2216,7 @@ app.post('/admin/auth/login', async (c) => {
     });
 
     const isSecure = c.req.url.startsWith('https://');
-    const cookieString = `gf_admin_session=${encodeURIComponent(rawSessionToken)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${isSecure ? '; Secure' : ''}`;
+    const cookieString = `gf_admin_session=${encodeURIComponent(rawSessionToken)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200${isSecure ? '; Secure' : ''}`;
 
     c.header('Set-Cookie', cookieString);
 
@@ -1979,7 +2258,8 @@ app.post('/admin/auth/logout', adminAuthMiddleware, async (c) => {
     });
   }
 
-  c.header('Set-Cookie', 'gf_admin_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
+  const secureCookie = c.req.url.startsWith('https://') ? '; Secure' : '';
+  c.header('Set-Cookie', `gf_admin_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secureCookie}`);
   return c.json({ success: true, message: 'Logged out successfully.' });
 });
 
@@ -2009,7 +2289,7 @@ app.get('/admin/dashboard', adminAuthMiddleware, async (c) => {
         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as count_completed,
         SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as count_cancelled,
         SUM(CASE WHEN status = 'refunded' THEN 1 ELSE 0 END) as count_refunded,
-        SUM(CASE WHEN status IN ('paid', 'processing', 'completed') AND fulfillment_status != 'delivered' THEN 1 ELSE 0 END) as count_fulfillment_pending,
+        SUM(CASE WHEN status IN ('paid', 'processing', 'completed') AND fulfillment_status NOT IN ('package_delivered', 'setup_completed') THEN 1 ELSE 0 END) as count_fulfillment_pending,
         SUM(CASE WHEN status IN ('paid', 'processing', 'completed') THEN total_usd ELSE 0 END) as gross_revenue,
         SUM(CASE WHEN status = 'refunded' THEN total_usd ELSE 0 END) as refunded_amount
       FROM orders
@@ -2521,9 +2801,23 @@ app.post('/admin/payments/:id/sync', adminAuthMiddleware, async (c) => {
       ).bind(liveStatus, liveTxHash, actualPayId).run();
 
       if (['confirmed', 'finished', 'paid'].includes(liveStatus)) {
+        const order = await db.prepare(
+          `SELECT id, total_usd, total_usd_cents, delivery_method FROM orders WHERE id = ?`
+        ).bind(payment.order_id).first();
+        const reconciliation = reconcileProviderPayment(nowPayData, payment, order);
+        if (!reconciliation.valid) {
+          await db.prepare(
+            `UPDATE crypto_payments
+             SET status = 'review_required', verification_source = 'reconciliation_failed', updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`
+          ).bind(actualPayId).run();
+          return c.json({ success: false, error: reconciliation.reason, status: 'review_required' }, 409);
+        }
+
+        const fulfillmentStatus = order.delivery_method === 'geelark_setup' ? 'setup_pending' : 'fulfillment_pending';
         await db.prepare(
-          'UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-        ).bind('paid', payment.order_id).run();
+          'UPDATE orders SET status = ?, fulfillment_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        ).bind('paid', fulfillmentStatus, payment.order_id).run();
       }
 
       await recordAuditLog(db, {
@@ -2576,6 +2870,9 @@ app.post('/admin/payments/:id/manual-verify', adminAuthMiddleware, requireRole('
 
     const finalTxHash = tx_hash || payment.tx_hash || 'MANUAL_VERIFIED_BY_' + user.email;
 
+    const order = await db.prepare('SELECT delivery_method FROM orders WHERE id = ?').bind(payment.order_id).first();
+    const fulfillmentStatus = order?.delivery_method === 'geelark_setup' ? 'setup_pending' : 'fulfillment_pending';
+
     await db.batch([
       db.prepare(
         `UPDATE crypto_payments
@@ -2584,9 +2881,9 @@ app.post('/admin/payments/:id/manual-verify', adminAuthMiddleware, requireRole('
       ).bind(finalTxHash, user.email, payment.id),
       db.prepare(
         `UPDATE orders
-         SET status = 'paid', updated_at = CURRENT_TIMESTAMP
+         SET status = 'paid', fulfillment_status = ?, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`
-      ).bind(payment.order_id),
+      ).bind(fulfillmentStatus, payment.order_id),
     ]);
 
     await recordAuditLog(db, {
@@ -2652,7 +2949,6 @@ app.post('/admin/fulfillment/:orderId/resend', adminAuthMiddleware, async (c) =>
 
   try {
     const body = await c.req.json().catch(() => ({}));
-    const clientProvidedIdempotencyKey = body.idempotency_key || `resend_${orderId}_${Date.now()}`;
 
     const order = await db.prepare('SELECT * FROM orders WHERE id = ?').bind(orderId).first();
     if (!order) {
@@ -2663,15 +2959,6 @@ app.post('/admin/fulfillment/:orderId/resend', adminAuthMiddleware, async (c) =>
       return c.json({ success: false, error: `Cannot fulfill order with status "${order.status}". Order must be paid.` }, 400);
     }
 
-    const recentLog = await db.prepare(
-      `SELECT id, created_at FROM order_fulfillment_logs
-       WHERE order_id = ? AND status = 'dispatched' AND created_at > datetime('now', '-60 seconds')`
-    ).bind(orderId).first();
-
-    if (recentLog) {
-      return c.json({ success: false, error: 'Idempotency Protection: A package was already dispatched to this customer within the last 60 seconds.' }, 429);
-    }
-
     const payment = await db.prepare('SELECT currency FROM crypto_payments WHERE order_id = ?').bind(orderId).first();
 
     let parsedItems = [];
@@ -2679,52 +2966,127 @@ app.post('/admin/fulfillment/:orderId/resend', adminAuthMiddleware, async (c) =>
       parsedItems = JSON.parse(order.items || '[]');
     } catch (e) {}
 
-    let attachmentBuffer = null;
-    let fileName = `geelark_flows_package_${orderId}.zip`;
-
-    if (c.env.FLOWS_BUCKET) {
-      try {
-        const r2Obj = await c.env.FLOWS_BUCKET.get('master_package.zip');
-        if (r2Obj) {
-          attachmentBuffer = await r2Obj.arrayBuffer();
-        }
-      } catch (r2Err) {
-        console.warn('R2 bucket fetch notice:', r2Err.message);
-      }
+    if (!Array.isArray(parsedItems) || parsedItems.length === 0) {
+      return c.json({ success: false, error: 'Order has no valid purchased items to fulfill.' }, 409);
     }
 
-    await sendFulfillmentEmail({
-      resendApiKey: c.env.RESEND_API_KEY,
-      customerEmail: order.customer_email,
-      orderId,
-      networkLabel: payment?.currency || 'TRC-20',
-      items: parsedItems,
-      attachmentBuffer,
-      fileName,
-    });
+    const minuteBucket = Math.floor(Date.now() / 60000);
+    const idempotencyKey = `fulfillment_dispatch_${orderId}_${minuteBucket}`;
+    const logId = 'fl_' + generateSecureToken(8);
+    try {
+      await db.prepare(
+        `INSERT INTO order_fulfillment_logs
+         (id, order_id, idempotency_key, triggered_by, recipient_email, status)
+         VALUES (?, ?, ?, ?, ?, 'sending')`
+      ).bind(logId, orderId, idempotencyKey, `admin:${user.email}`, order.customer_email).run();
+    } catch (reserveErr) {
+      return c.json({ success: false, error: 'A fulfillment delivery is already being processed for this order. Please wait one minute.' }, 429);
+    }
 
-    await db.prepare(
-      'UPDATE orders SET fulfillment_status = ?, delivered_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-    ).bind('delivered', orderId).run();
+    let downloadTokenId = null;
+    try {
+      const downloadLinks = [];
 
-    await db.prepare(
-      `INSERT INTO order_fulfillment_logs (id, order_id, idempotency_key, triggered_by, recipient_email, status)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).bind('fl_' + generateSecureToken(8), orderId, clientProvidedIdempotencyKey, `admin:${user.email}`, order.customer_email, 'dispatched').run();
+      if (order.delivery_method === 'download_package') {
+        const bucket = c.env?.FLOWS_BUCKET;
+        if (!bucket) throw new Error('FLOWS_BUCKET binding is missing; delivery was stopped safely.');
 
-    await recordAuditLog(db, {
-      adminId: user.id,
-      adminEmail: user.email,
-      ip: c.req.header('cf-connecting-ip') || '127.0.0.1',
-      userAgent: c.req.header('user-agent'),
-      action: 'FULFILLMENT_RESENT',
-      entityType: 'order',
-      entityId: orderId,
-      newState: 'delivered',
-      reason: body.reason || 'Admin triggered manual package re-delivery',
-    });
+        const uniqueItems = [...new Map(parsedItems.map((item) => [item.id, item])).values()];
+        for (const item of uniqueItems) {
+          const assetKey = getFlowAssetKey(item.id);
+          if (!assetKey) throw new Error(`Unknown product in order: ${item.id}`);
+          const asset = await bucket.head(assetKey);
+          if (!asset) throw new Error(`Required flow asset is missing from R2: ${assetKey}`);
+        }
 
-    return c.json({ success: true, message: `Package re-sent successfully to ${order.customer_email}.`, orderId });
+        const rawDownloadToken = generateSecureToken(32);
+        const downloadTokenHash = await sha256Hex(rawDownloadToken);
+        downloadTokenId = 'dlt_' + generateSecureToken(8);
+        const downloadExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+        await db.prepare(
+          `INSERT INTO order_download_tokens
+           (id, order_id, token_hash, expires_at, created_by)
+           VALUES (?, ?, ?, ?, ?)`
+        ).bind(downloadTokenId, orderId, downloadTokenHash, downloadExpiresAt, `admin:${user.email}`).run();
+
+        const siteOrigin = getSiteOrigin(c.env);
+        uniqueItems.forEach((item) => {
+          downloadLinks.push({
+            title: item.title,
+            url: `${siteOrigin}/api/downloads/${rawDownloadToken}/${encodeURIComponent(item.id)}`,
+          });
+        });
+      }
+
+      await sendFulfillmentEmail({
+        resendApiKey: c.env.RESEND_API_KEY,
+        customerEmail: order.customer_email,
+        orderId,
+        networkLabel: payment?.currency || 'TRC-20',
+        items: parsedItems,
+        downloadLinks,
+        deliveryMethod: order.delivery_method,
+      });
+
+      const nextFulfillmentStatus = order.delivery_method === 'geelark_setup'
+        ? 'setup_in_progress'
+        : 'package_delivered';
+
+      const updates = [
+        db.prepare(
+          `UPDATE orders
+           SET fulfillment_status = ?, delivered_at = CASE WHEN ? = 'package_delivered' THEN CURRENT_TIMESTAMP ELSE delivered_at END,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`
+        ).bind(nextFulfillmentStatus, nextFulfillmentStatus, orderId),
+        db.prepare(
+          `UPDATE order_fulfillment_logs SET status = 'dispatched', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+        ).bind(logId),
+      ];
+
+      if (downloadTokenId) {
+        updates.push(
+          db.prepare(
+            `UPDATE order_download_tokens
+             SET revoked_at = CURRENT_TIMESTAMP
+             WHERE order_id = ? AND id != ? AND revoked_at IS NULL`
+          ).bind(orderId, downloadTokenId)
+        );
+      }
+
+      await db.batch(updates);
+
+      await recordAuditLog(db, {
+        adminId: user.id,
+        adminEmail: user.email,
+        ip: c.req.header('cf-connecting-ip') || '127.0.0.1',
+        userAgent: c.req.header('user-agent'),
+        action: 'FULFILLMENT_DISPATCHED',
+        entityType: 'order',
+        entityId: orderId,
+        newState: nextFulfillmentStatus,
+        reason: body.reason || 'Admin triggered secure fulfillment delivery',
+      });
+
+      return c.json({ success: true, message: `Secure fulfillment email sent to ${order.customer_email}.`, orderId });
+    } catch (deliveryErr) {
+      if (downloadTokenId) {
+        await db.prepare(
+          'UPDATE order_download_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE id = ?'
+        ).bind(downloadTokenId).run().catch(() => {});
+      }
+      await db.batch([
+        db.prepare(
+          `UPDATE order_fulfillment_logs
+           SET status = 'failed', error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+        ).bind(deliveryErr.message, logId),
+        db.prepare(
+          `UPDATE orders SET fulfillment_status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+        ).bind(orderId),
+      ]).catch(() => {});
+      throw deliveryErr;
+    }
   } catch (err) {
     console.error('Resend fulfillment error:', err);
     return c.json({ success: false, error: err.message }, 500);
@@ -2966,7 +3328,10 @@ app.get('/admin/mail/:id', adminAuthMiddleware, async (c) => {
       }
     }
 
-    const attachments = await db.prepare('SELECT * FROM email_attachments WHERE inbound_email_id = ?').bind(emailId).all();
+    const attachments = await db.prepare(
+      `SELECT id, inbound_email_id, provider_attachment_id, filename, content_type, size_bytes
+       FROM email_attachments WHERE inbound_email_id = ?`
+    ).bind(emailId).all();
 
     let linkedOrder = null;
     if (email.order_id) {
@@ -3004,6 +3369,55 @@ app.get('/admin/mail/:id', adminAuthMiddleware, async (c) => {
   } catch (err) {
     console.error('Admin email detail error:', err);
     return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+// GET /api/admin/mail/:id/attachments/:attachmentId — authenticated provider proxy
+app.get('/admin/mail/:id/attachments/:attachmentId', adminAuthMiddleware, async (c) => {
+  const db = c.env?.DB;
+  const resendApiKey = c.env?.RESEND_API_KEY;
+  if (!db || !resendApiKey) {
+    return c.json({ success: false, error: 'Attachment service is unavailable.' }, 503);
+  }
+
+  try {
+    const emailId = c.req.param('id');
+    const attachmentId = c.req.param('attachmentId');
+    const attachment = await db.prepare(
+      `SELECT filename, content_type, storage_reference
+       FROM email_attachments WHERE id = ? AND inbound_email_id = ?`
+    ).bind(attachmentId, emailId).first();
+
+    if (!attachment?.storage_reference) {
+      return c.json({ success: false, error: 'Attachment not found.' }, 404);
+    }
+
+    const providerUrl = new URL(attachment.storage_reference);
+    const hostname = providerUrl.hostname.toLowerCase();
+    if (providerUrl.protocol !== 'https:' || !(hostname === 'resend.com' || hostname.endsWith('.resend.com'))) {
+      return c.json({ success: false, error: 'Attachment provider is not trusted.' }, 400);
+    }
+
+    const upstream = await fetch(providerUrl.toString(), {
+      headers: { Authorization: `Bearer ${resendApiKey}` },
+    });
+    if (!upstream.ok || !upstream.body) {
+      return c.json({ success: false, error: 'Attachment has expired or is unavailable.' }, 502);
+    }
+
+    const filename = String(attachment.filename || 'attachment').replace(/["\r\n]/g, '_');
+    const headers = new Headers({
+      'Content-Type': attachment.content_type || upstream.headers.get('content-type') || 'application/octet-stream',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'no-store, private',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    const contentLength = upstream.headers.get('content-length');
+    if (contentLength) headers.set('Content-Length', contentLength);
+    return new Response(upstream.body, { status: 200, headers });
+  } catch (err) {
+    console.error('Attachment proxy error:', err.message);
+    return c.json({ success: false, error: 'Attachment could not be downloaded.' }, 500);
   }
 });
 
@@ -3519,19 +3933,53 @@ app.patch('/admin/custom-requests/:id', adminAuthMiddleware, async (c) => {
 // ROOT CLOUDFLARE WORKER ROUTER WITH SPA ASSETS FALLBACK
 // ----------------------------------------------------
 const mainApp = new Hono();
+const PUBLIC_SPA_PATHS = new Set([
+  '/',
+  '/cart',
+  '/checkout',
+  '/contact',
+  '/terms',
+  '/privacy',
+  '/refund-policy',
+]);
+
+function isKnownSpaPath(pathname) {
+  const normalizedPath = pathname !== '/' ? pathname.replace(/\/+$/, '') : '/';
+  if (PUBLIC_SPA_PATHS.has(normalizedPath) || normalizedPath === '/admin' || normalizedPath.startsWith('/admin/')) {
+    return true;
+  }
+
+  const flowMatch = normalizedPath.match(/^\/flows\/([^/]+)$/);
+  return Boolean(flowMatch && AUTHORITATIVE_CATALOG_MAP.has(flowMatch[1]));
+}
+
+mainApp.use('*', async (c, next) => {
+  c.header('X-Content-Type-Options', 'nosniff');
+  c.header('X-Frame-Options', 'DENY');
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+  c.header(
+    'Content-Security-Policy',
+    "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' https: blob:; connect-src 'self'",
+  );
+  if (c.req.url.startsWith('https://')) {
+    c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  }
+  await next();
+});
 
 // Mount all API endpoints under /api
 mainApp.route('/api', app);
 
 // Forward root webhooks if sent directly to root
 mainApp.post('/webhooks/crypto', (c) => app.fetch(new Request(new URL('/webhooks/crypto', c.req.url), c.req.raw), c.env, c.executionCtx));
-mainApp.post('/webhooks/resend-inbound', (c) => app.fetch(new Request(new URL('/webhooks/resend-inbound', c.req.url), c.req.raw), c.env, c.executionCtx));
+mainApp.post('/webhooks/resend-inbound', (c) => app.fetch(new Request(new URL('/webhooks/resend', c.req.url), c.req.raw), c.env, c.executionCtx));
 
 // Fallback to Cloudflare Workers Static Assets for all non-API / SPA routes (/cart, /checkout, /admin, etc.)
 mainApp.all('*', async (c) => {
   if (c.env?.ASSETS) {
     const res = await c.env.ASSETS.fetch(c.req.raw);
-    if (res.status === 404 && !c.req.path.includes('.')) {
+    if (res.status === 404 && !c.req.path.includes('.') && isKnownSpaPath(c.req.path)) {
       return c.env.ASSETS.fetch(new Request(new URL('/index.html', c.req.url), c.req.raw));
     }
     return res;

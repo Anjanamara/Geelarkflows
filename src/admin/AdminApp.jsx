@@ -109,7 +109,9 @@ export default function AdminApp() {
     return (
       <div className="login-screen-wrap" style={{ color: 'var(--admin-text-muted)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div className="sidebar-logo-badge">GF</div>
+          <div className="sidebar-logo-badge" aria-hidden="true">
+            <img src="/logo-mark.svg" alt="" />
+          </div>
           <span>Verifying admin session...</span>
         </div>
       </div>

@@ -20,6 +20,10 @@ const key = process.env.INDEXNOW_KEY || '4a0e17038739472cad3cd17a15f9e39c';
 const host = new URL(siteUrl).host;
 const urlList = [
   `${siteUrl}/`,
+  `${siteUrl}/contact`,
+  `${siteUrl}/terms`,
+  `${siteUrl}/privacy`,
+  `${siteUrl}/refund-policy`,
   ...products.map((product) => `${siteUrl}/flows/${product.id}/`),
 ];
 

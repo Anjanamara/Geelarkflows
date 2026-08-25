@@ -1,147 +1,17 @@
-/* CheckoutProgress.css */
-.checkout-progress-nav {
-  width: 100%;
-  max-width: 680px;
-  margin: 0 auto 32px auto;
-  padding: 0 16px;
-}
-
-.progress-steps-list {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  width: 100%;
-}
-
-.progress-step-item {
-  display: flex;
-  align-items: center;
-  flex: 1;
-  position: relative;
-}
-
-.progress-step-item:last-child {
-  flex: 0 0 auto;
-}
-
-.step-bubble-wrap {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: transparent;
-  border-radius: 20px;
-  padding: 4px 10px 4px 4px;
-  transition: all 0.2s ease;
-  user-select: none;
-}
-
-.step-bubble-wrap.clickable {
-  cursor: pointer;
-}
-
-.step-bubble-wrap.clickable:hover {
-  background: rgba(255, 255, 255, 0.05);
-}
-
-.step-bubble-wrap.clickable:hover .step-label {
-  color: #F1F3F1;
-}
-
-.step-badge {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 700;
-  transition: all 0.2s ease;
-  flex-shrink: 0;
-}
-
-/* State: Upcoming */
-.progress-step-item.upcoming .step-badge {
-  background: #151917;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #6E7571;
-}
-
-.progress-step-item.upcoming .step-label {
-  color: #6E7571;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-/* State: Current Active */
-.progress-step-item.current .step-badge {
-  background: #A7FF4F;
-  border: 1px solid #A7FF4F;
-  color: #0B0D0C;
-  box-shadow: 0 0 12px rgba(167, 255, 79, 0.35);
-}
-
-.progress-step-item.current .step-label {
-  color: #F1F3F1;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-/* State: Completed */
-.progress-step-item.completed .step-badge {
-  background: rgba(167, 255, 79, 0.15);
-  border: 1px solid rgba(167, 255, 79, 0.4);
-  color: #A7FF4F;
-}
-
-.progress-step-item.completed .step-label {
-  color: #A3ACA6;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.check-icon {
-  stroke: #A7FF4F;
-}
-
-/* Connector Line */
-.step-connector {
-  flex: 1;
-  height: 1.5px;
-  background: rgba(255, 255, 255, 0.08);
-  margin: 0 10px;
-  transition: all 0.2s ease;
-}
-
-.progress-step-item.completed .step-connector {
-  background: rgba(167, 255, 79, 0.35);
-}
-
-/* Mobile Responsiveness */
-@media (max-width: 640px) {
-  .checkout-progress-nav {
-    margin-bottom: 24px;
-    padding: 0 8px;
-  }
-
-  .step-label {
-    display: none;
-  }
-
-  .step-bubble-wrap {
-    padding: 0;
-  }
-
-  .step-badge {
-    width: 24px;
-    height: 24px;
-    font-size: 11px;
-  }
-
-  .step-connector {
-    margin: 0 6px;
-  }
-}
+.checkout-progress-nav { width: min(620px, 100%); margin: 0 auto 34px; padding: 0 12px; }
+.progress-steps-list { width: 100%; display: flex; align-items: center; justify-content: space-between; list-style: none; }
+.progress-step-item { display: flex; align-items: center; flex: 1; position: relative; }
+.progress-step-item:last-child { flex: 0 0 auto; }
+.step-bubble-wrap { min-height: 36px; padding: 3px 7px 3px 3px; display: flex; align-items: center; gap: 8px; border-radius: 999px; }
+.step-bubble-wrap.clickable { cursor: pointer; }
+.step-bubble-wrap.clickable:hover { background: var(--bg-secondary); }
+.step-badge { width: 28px; height: 28px; display: grid; place-items: center; flex: 0 0 auto; border: 1px solid var(--border-medium); border-radius: 50%; background: var(--bg-card); color: var(--text-muted); font-family: var(--font-mono); font-size: 0.56rem; font-weight: 700; }
+.step-label { color: var(--text-muted); font-size: 0.6rem; font-weight: 650; }
+.progress-step-item.current .step-badge { border-color: #8b7cff; background: linear-gradient(135deg,#7565ef,#927fff); color: white; box-shadow: 0 0 0 4px rgba(139,124,255,.1); }
+.progress-step-item.current .step-label { color: var(--text-primary); }
+.progress-step-item.completed .step-badge { border-color: rgba(95,224,160,.35); background: rgba(95,224,160,.09); color: #62dfa0; }
+.progress-step-item.completed .step-label { color: var(--text-secondary); }
+.check-icon { stroke: currentColor; }
+.step-connector { height: 1px; margin: 0 9px; flex: 1; background: var(--border-medium); }
+.progress-step-item.completed .step-connector { background: #9fbd71; }
+@media (max-width: 640px) { .checkout-progress-nav { margin-bottom: 24px; } .step-label { display: none; } .step-bubble-wrap { padding: 0; } .step-connector { margin: 0 6px; } }

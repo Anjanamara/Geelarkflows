@@ -4,7 +4,14 @@
   "description": "Reusable GeeLark automation flows for social media, dating apps, mobile SEO, and account operations at scale.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#111412",
-  "theme_color": "#111412",
-  "icons": []
+  "background_color": "#070b12",
+  "theme_color": "#070b12",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
 }

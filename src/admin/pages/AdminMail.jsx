@@ -524,9 +524,9 @@ export default function AdminMail({ navigate, lastSyncedAt, user, onActionSucces
                             {Math.round((att.size_bytes || 0) / 1024)} KB · {att.content_type}
                           </span>
                         </div>
-                        {att.storage_reference && (
+                        {att.id && (
                           <a
-                            href={att.storage_reference}
+                            href={`/api/admin/mail/${selectedEmail.id}/attachments/${att.id}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="btn-admin-secondary"
@@ -547,12 +547,14 @@ export default function AdminMail({ navigate, lastSyncedAt, user, onActionSucces
                   <iframe
                     title="Sanitized Email Content"
                     className="mail-html-iframe"
-                    sandbox="allow-same-origin"
+                    sandbox=""
                     srcDoc={`
                       <!DOCTYPE html>
                       <html>
                         <head>
                           <meta charset="utf-8" />
+                          <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: cid:; style-src 'unsafe-inline'; font-src 'none'; media-src 'none'; frame-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'" />
+                          <meta name="referrer" content="no-referrer" />
                           <style>
                             body {
                               font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;

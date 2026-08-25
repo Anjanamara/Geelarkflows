@@ -3,49 +3,26 @@ import { platforms } from '../data/products';
 import './FlowCard.css';
 
 export default function FlowCard({ product, onViewDetails }) {
-  const { cart, addToCartWithAnimation, lastAddedId } = useCart();
+  const { cart, addToCartWithAnimation, openCart, lastAddedId } = useCart();
   const platform = platforms.find((item) => item.id === product.platform);
   const isInCart = cart.some((item) => item.id === product.id);
   const isJustAdded = lastAddedId === product.id;
   const { details } = product;
 
-  const handleGetFlowClick = (event) => {
+  const handleCartAction = (event) => {
     event.stopPropagation();
     if (isInCart) {
-      openCart(); // If already in cart, simply open cart without replaying any animation!
+      openCart();
       return;
     }
     addToCartWithAnimation(product, event.currentTarget);
   };
 
   return (
-    <article
-      className="flow-card"
-      onClick={() => onViewDetails(product)}
-      style={{ '--platform-accent': platform?.color || 'var(--accent-lime)' }}
-    >
-      <div className="card-visual">
-        <div className="card-visual-grid" />
-        <div className="card-platform-pill">
-          <span>{platform?.shortLabel || 'GF'}</span>
-          {platform?.label || product.platform}
-        </div>
-        <div className="card-flow-diagram" aria-hidden="true">
-          <i className="diagram-node">IN</i><b />
-          <i className="diagram-node active">RUN</i><b />
-          <i className="diagram-node">OK</i>
-        </div>
-        <div className="reusable-badge"><i /> Reusable workflow</div>
-      </div>
-
+    <article className="flow-card" style={{ '--platform-accent': platform?.color || 'var(--accent-lime-dark)' }}>
       {details.demoVideo && (
-        <div className="card-video-wrap" onClick={(event) => event.stopPropagation()}>
-          <video
-            controls
-            preload="metadata"
-            poster={details.demoPoster || undefined}
-            aria-label={`${product.title} video demo`}
-          >
+        <div className="card-video-wrap">
+          <video controls preload="metadata" poster={details.demoPoster || undefined} aria-label={`${product.title} video demo`}>
             <source src={details.demoVideo} />
             Your browser does not support video playback.
           </video>
@@ -53,53 +30,38 @@ export default function FlowCard({ product, onViewDetails }) {
       )}
 
       <div className="flow-card-body">
-        <div className="card-category">{details.category}</div>
+        <div className="card-meta-row">
+          <span className="card-platform-token">{platform?.shortLabel || 'GF'}</span>
+          <span className="card-platform-name">{platform?.label || product.platform}</span>
+          <span className="card-category">{details.category}</span>
+        </div>
+
         <div className="card-title-price">
           <h3>{product.title}</h3>
-          <div className="flow-price">
-            <strong>${product.price.toLocaleString('en-US')}</strong>
-            <span>USD</span>
-          </div>
+          <div className="flow-price"><strong>${product.price.toLocaleString('en-US')}</strong><span>USD</span></div>
         </div>
+
         <p className="flow-description">{details.description}</p>
 
-        <div className="included-block">
-          <span>Included in this workflow</span>
-          <ul className="flow-features">
-            {details.features.map((feature) => <li key={feature}>{feature}</li>)}
-          </ul>
-        </div>
+        <ul className="flow-features" aria-label="Included actions">
+          {details.features.slice(0, 3).map((feature) => <li key={feature}>{feature}</li>)}
+        </ul>
 
         {details.supportedPlatforms.length > 0 && (
-          <div className="supported-apps">
+          <div className="supported-apps" aria-label="Supported apps">
             {details.supportedPlatforms.map((name) => <span key={name}>{name}</span>)}
           </div>
         )}
 
-        <div className="unlimited-runs">
-          <strong>Unlimited runs</strong>
-          <span>{details.usageNote}</span>
-        </div>
+        <div className="card-reuse-note"><span>↻</span><p><strong>Reusable after delivery</strong><small>Run it as many times as needed</small></p></div>
       </div>
 
       <div className="card-footer">
-        <a
-          className="btn-secondary"
-          href={`/flows/${product.id}/`}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onViewDetails(product);
-          }}
-        >
-          Full details
+        <a href={`/flows/${product.id}/`} onClick={(event) => { event.preventDefault(); onViewDetails(product); }}>
+          View scope <span aria-hidden="true">↗</span>
         </a>
-        <button
-          type="button"
-          className={`btn-primary ${isInCart ? 'in-cart' : ''}`}
-          onClick={handleGetFlowClick}
-        >
-          {isJustAdded ? 'Added ✓' : isInCart ? 'In cart ✓' : 'Get this flow'}
+        <button type="button" className={isInCart ? 'in-cart' : ''} onClick={handleCartAction}>
+          {isJustAdded ? 'Added ✓' : isInCart ? 'View cart' : 'Add to cart'}
         </button>
       </div>
     </article>

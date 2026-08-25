@@ -37,7 +37,7 @@ globalThis.fetch = async (url, options) => {
         price_amount: lastNowPaymentsPayload?.price_amount || 100,
         price_currency: 'usd',
         pay_amount: lastNowPaymentsPayload?.price_amount || 100,
-        pay_currency: 'usdttrc20',
+        pay_currency: lastNowPaymentsPayload?.pay_currency || 'usdttrc20',
         order_id: lastNowPaymentsPayload?.order_id || 'ord_mock',
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
@@ -59,12 +59,14 @@ const mockDb = {
                 id: args[0],
                 customer_email: args[1],
                 total_usd: args[2],
-                delivery_method: args[3],
-                workflow_subtotal: args[4],
-                setup_fee: args[5],
-                status: args[6],
-                items: JSON.parse(args[7] || '[]'),
-                fulfillment_status: args[8],
+                total_usd_cents: args[3],
+                delivery_method: args[4],
+                workflow_subtotal: args[5],
+                setup_fee: args[7],
+                status: args[9],
+                items: JSON.parse(args[10] || '[]'),
+                fulfillment_status: args[11],
+                status_token_hash: args[12],
               };
             }
             return { success: true };
@@ -75,6 +77,7 @@ const mockDb = {
       },
     };
   },
+  batch: async (statements) => Promise.all(statements.map((statement) => statement.run())),
 };
 
 const mockEnv = {
@@ -301,6 +304,91 @@ await runAsyncTest('Case 11: Multi-item cart NOWPayments price_amount strictly e
   assert.equal(lastInsertedOrder.items.length, 2);
   assert.equal(lastInsertedOrder.items[0].price, 1000);
   assert.equal(lastInsertedOrder.items[1].price, 400);
+});
+
+await runAsyncTest('Case 12: Checkout returns a private 256-bit status token and full-entropy order ID', async () => {
+  const { status, data } = await executeCheckoutRoute({
+    email: 'secure@example.com',
+    delivery_method: 'download_package',
+    network: 'erc20',
+    cart: [{ id: 'instagram-account-creation', quantity: 1 }],
+  });
+
+  assert.equal(status, 200);
+  assert.match(data.data.orderId, /^ord_[a-f0-9]{32}$/);
+  assert.match(data.data.statusToken, /^[a-f0-9]{64}$/);
+  assert.equal(data.data.network, 'erc20');
+  assert.equal(data.data.qrCodeUrl, undefined);
+});
+
+await runAsyncTest('Case 13: Database batch failure never reveals a live payment address', async () => {
+  const originalBatch = mockDb.batch;
+  mockDb.batch = async () => { throw new Error('simulated D1 outage'); };
+  try {
+    const { status, data } = await executeCheckoutRoute({
+      email: 'safe-failure@example.com',
+      delivery_method: 'download_package',
+      network: 'trc20',
+      cart: [{ id: 'instagram-account-creation', quantity: 1 }],
+    });
+    assert.equal(status, 503);
+    assert.equal(data.success, false);
+    assert.equal(data.data, undefined);
+    assert.doesNotMatch(JSON.stringify(data), /TMockReceivingAddress/);
+  } finally {
+    mockDb.batch = originalBatch;
+  }
+});
+
+await runAsyncTest('Case 14: Checkout invoice creation is rate-limited before contacting the payment gateway', async () => {
+  const rateLimitedDb = {
+    ...mockDb,
+    prepare(query) {
+      if (query.includes('INSERT INTO api_rate_limits')) {
+        return {
+          bind: () => ({
+            first: async () => ({ request_count: 11 }),
+          }),
+        };
+      }
+      return mockDb.prepare(query);
+    },
+  };
+
+  lastNowPaymentsPayload = null;
+  const req = new Request('https://geelarkflows.com/api/checkout/create', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'CF-Connecting-IP': '203.0.113.25',
+    },
+    body: JSON.stringify({
+      email: 'rate-limited@example.com',
+      delivery_method: 'download_package',
+      network: 'trc20',
+      cart: [{ id: 'instagram-account-creation', quantity: 1 }],
+    }),
+  });
+
+  const res = await app.request(req, undefined, { ...mockEnv, DB: rateLimitedDb });
+  const data = await res.json();
+  assert.equal(res.status, 429);
+  assert.equal(res.headers.get('retry-after'), '900');
+  assert.equal(data.success, false);
+  assert.equal(lastNowPaymentsPayload, null);
+});
+
+await runAsyncTest('Case 15: Malformed checkout JSON is rejected without leaking an internal parser error', async () => {
+  const req = new Request('https://geelarkflows.com/api/checkout/create', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{not-valid-json',
+  });
+  const res = await app.request(req, undefined, mockEnv);
+  const data = await res.json();
+  assert.equal(res.status, 400);
+  assert.equal(data.error, 'Invalid JSON payload format.');
+  assert.doesNotMatch(JSON.stringify(data), /SyntaxError|Unexpected token|JSON at position/i);
 });
 
 console.log('\n================================================================');

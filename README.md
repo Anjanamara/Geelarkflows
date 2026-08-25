@@ -1,50 +1,118 @@
 # GeeLark Flows — Reusable Automation Marketplace
 
-A responsive marketplace for reusable GeeLark automation flows covering social account creation, warmup, publishing, profile management, dating apps, video tooling, analytics, mobile SEO, and custom development.
+Production storefront and operations dashboard for reusable mobile automation flows. The application sells platform-specific workflows, accepts USDT through NOWPayments, receives transactional email through Resend, stores commerce data in Cloudflare D1, and streams purchased flow archives privately from R2.
 
-## Technology Stack & Architectural Patterns
+GeeLark Flows is an independent digital-products business and is not affiliated with, endorsed by, or sponsored by the owner of the GeeLark software or trademark.
 
-- **Core Framework**: React 19 + Vite 6
-- **Styling Paradigm**: Vanilla CSS custom properties implementing a **Modern Cyber-Industrial Theme** (Slate background, neon indigo accent lighting, glassmorphism, dynamic glow hover animations).
-- **State Management**: Headless React Context providers (`CartContext` and `FilterContext`) managing checkout queues, platform tags, search indexes, and layout states.
+## Architecture
 
-## Design Tokens (`src/index.css`)
+- React 19 storefront and private administration UI
+- Vite 8 build and local development server
+- Cloudflare Worker API using Hono
+- D1 for orders, invoices, sessions, audit events, mail, and fulfillment state
+- R2 for private product archives
+- NOWPayments for USDT invoices and signed IPN callbacks
+- Resend for transactional delivery and signed inbound-email events
 
-- **Palette Rules**: Harmonics focused around `#0f172a` (deep slate), `#818cf8` (neon indigo), with platform indicators matching specific brands (`#E1306C` for Instagram, `#00f2ea` for TikTok, `#EA4335` for Gmail).
-- **Glassmorphism Spec**: `background: rgba(15, 23, 42, 0.65)`, `backdrop-filter: blur(12px)`, `border: 1px solid rgba(255, 255, 255, 0.08)`.
-- **Spacing Grid**: Strict 4px baseline (`--sp-1: 4px` through `--sp-16: 64px`). No arbitrary values.
-- **Typography Scale**: Body paired with *Inter*, metrics and system scripts utilizing *JetBrains Mono* to enforce technical confidence.
+Pricing and product identity are resolved from `src/data/products.js` by the Worker. Client-submitted prices and titles are never trusted.
 
-## Run Locally
+## Local development
 
-Ensure you have Node.js installed, then execute:
+Requirements: Node.js 24+ and npm.
 
 ```bash
-# Install dependencies
-npm install
-
-# Start local server
+npm ci
+copy .env.example .env
 npm run dev
 ```
 
-The application will start on `http://localhost:5173`.
+The server binds to `127.0.0.1:5173` by default. Local checkout uses deterministic fake wallet addresses and never contacts NOWPayments unless `ENABLE_LIVE_PAYMENT_MOCK=true` is explicitly configured.
 
-## SEO and Search Engine Setup
+Local admin login is disabled until `DEV_ADMIN_EMAIL` and `DEV_ADMIN_PASSWORD` are set. Local webhook mutation is disabled until `DEV_CRYPTO_WEBHOOK_SECRET` is set.
 
-The production build creates crawlable static pages for every flow, unique titles and descriptions, canonical URLs, Product and Breadcrumb structured data, an XML sitemap, a plain-text Bing sitemap, `robots.txt`, and an IndexNow submission list.
+## Verification
 
 ```bash
-# Optional: copy .env.example to .env and add ownership verification tokens
+npm test
 npm run build
+npm audit --audit-level=high
+```
 
-# Run only after the new build and IndexNow key file are live
+The test command runs pricing, route-level checkout, payment reconciliation, webhook signature, checkout privacy, secure download, legal/trust, custom-request, cart, delivery, and schema suites.
+
+## Production configuration
+
+Non-secret Worker variables live in `wrangler.jsonc`. Store secrets with Wrangler, never in source control:
+
+```bash
+npx wrangler secret put NOWPAYMENTS_API_KEY
+npx wrangler secret put NOWPAYMENTS_IPN_SECRET
+npx wrangler secret put RESEND_API_KEY
+npx wrangler secret put RESEND_WEBHOOK_SECRET
+npx wrangler secret put ADMIN_BOOTSTRAP_SECRET
+```
+
+`ADMIN_BOOTSTRAP_SECRET` must contain at least 32 characters. Bootstrap is disabled by default with `ADMIN_BOOTSTRAP_ENABLED=false`. Enable it only for the initial administrator creation, provision the administrator, then immediately disable it and deploy again.
+
+Apply database migrations before deploying code that expects the new columns:
+
+```bash
+npx wrangler d1 execute geelarkflows_payment --remote --command="SELECT order_id, COUNT(*) AS invoice_count FROM crypto_payments GROUP BY order_id HAVING COUNT(*) > 1"
+npx wrangler d1 migrations apply geelarkflows_payment --remote
+npm run build
+npm run deploy
+```
+
+The preflight query must return no rows. If it finds historical duplicates, review them manually before applying the unique invoice-per-order index; do not delete payment history blindly.
+
+`schema.sql` is the consolidated schema for a completely new database. Existing databases should use the versioned files in `migrations/`.
+
+## R2 product delivery
+
+Each product must have its own ZIP object using this exact private key convention:
+
+```text
+flows/<product-id>.zip
+```
+
+For example:
+
+```text
+flows/instagram-account-creation.zip
+flows/tiktok-warmup.zip
+flows/mobile-seo-searches.zip
+```
+
+The admin fulfillment action verifies every purchased object before sending email. The customer receives seven-day private links. The Worker checks that the requested product belongs to the paid order and streams the R2 object without buffering it in memory. A missing object fails fulfillment and never marks the order delivered.
+
+## Checkout and payment security
+
+- Orders and invoices are written atomically before a wallet address is returned.
+- Order IDs use 128 bits of randomness.
+- Customer status requests require a separate 256-bit token and are rate-limited.
+- Public status responses omit customer email.
+- Signed payment events must match the stored payment ID, order ID, USDT network, expected crypto amount, USD price, and currency.
+- Underpayments and mismatches are placed into `review_required` instead of marking the order paid.
+- Customer polling reads D1 only; vendor synchronization is an explicit audited admin action.
+
+## SEO
+
+The production build generates static pages for every flow plus legal/contact routes, canonical metadata, Product/Breadcrumb/FAQ structured data, XML and text sitemaps, `robots.txt`, and an IndexNow URL list.
+
+```bash
+npm run build
 npm run seo:indexnow
 ```
 
-Production discovery files:
+Submit `https://geelarkflows.com/sitemap.xml` to both Google Search Console and Bing Webmaster Tools.
 
-- `https://geelarkflows.com/sitemap.xml`
-- `https://geelarkflows.com/sitemap.txt`
-- `https://geelarkflows.com/robots.txt`
+## Launch checklist
 
-Add the Google Search Console token to `GOOGLE_SITE_VERIFICATION` and the Bing Webmaster Tools token to `BING_SITE_VERIFICATION` in `.env` before building. Submit the XML sitemap in both webmaster dashboards after deployment.
+- Have qualified counsel review the published operator identity and determine whether any more specific jurisdiction or business-address disclosure is legally required.
+- Confirm the independent/non-affiliation trademark disclaimer is appropriate.
+- Upload one verified R2 archive for every active product ID.
+- Apply D1 migrations and verify there are no duplicate historical payment rows.
+- Configure all five Worker secrets and both provider webhooks.
+- Provision the first administrator, then disable bootstrap.
+- Run `npm test`, `npm run build`, and `npm audit --audit-level=high`.
+- Test one low-value invoice on each supported network before enabling normal sales.

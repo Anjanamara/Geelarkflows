@@ -2,6 +2,13 @@
 	"name": "geelarkflows",
 	"main": "src/worker.js",
 	"compatibility_date": "2026-05-25",
+	"vars": {
+		"SITE_URL": "https://geelarkflows.com",
+		"ADMIN_BOOTSTRAP_ENABLED": "false"
+	},
+	"observability": {
+		"enabled": true
+	},
 	"assets": {
 		"binding": "ASSETS",
 		"directory": "./dist",

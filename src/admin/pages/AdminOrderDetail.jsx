@@ -545,9 +545,9 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
                 </span>
               </div>
 
-              <div className={`timeline-step ${order.fulfillment_status === 'delivered' ? 'done' : ''}`}>
+              <div className={`timeline-step ${['package_delivered', 'setup_completed'].includes(order.fulfillment_status) ? 'done' : ''}`}>
                 <span className="timeline-dot" />
-                <span className="timeline-title">Digital Package Dispatched</span>
+                <span className="timeline-title">Secure Fulfillment Dispatched</span>
                 <span className="timeline-time">
                   {order.delivered_at ? new Date(order.delivered_at).toLocaleString() : 'Pending delivery'}
                 </span>

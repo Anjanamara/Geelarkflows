@@ -46,6 +46,20 @@ function generateSvixSignature(svixId, svixTimestamp, rawBody, secret) {
   return `v1,${sigBase64}`;
 }
 
+function createNowPaymentsPayload(paymentStatus = 'finished', overrides = {}) {
+  return {
+    payment_id: 'pay_sec_test_001',
+    order_id: 'ord_3a8b9f12',
+    payment_status: paymentStatus,
+    pay_currency: 'usdttrc20',
+    pay_amount: '1000',
+    actually_paid: '1000',
+    price_amount: 1000,
+    price_currency: 'usd',
+    ...overrides,
+  };
+}
+
 // ----------------------------------------------------------------
 // IN-MEMORY MOCK D1 DATABASE
 // ----------------------------------------------------------------
@@ -64,15 +78,21 @@ function createMockDb() {
     fulfillment_status: 'not_ready',
     items: JSON.stringify([{ id: 'instagram-account-creation', title: 'Instagram Account Creation', price: 1000, quantity: 1 }]),
     total_usd: 1000,
+    total_usd_cents: 100000,
     delivery_method: 'geelark_setup',
     workflow_subtotal: 1000,
     setup_fee: 0,
   });
 
   payments.set('ord_3a8b9f12', {
-    id: 'pay_3a8b9f12',
+    id: 'pay_sec_test_001',
     order_id: 'ord_3a8b9f12',
     currency: 'USDT (TRC-20)',
+    network_id: 'trc20',
+    provider_currency: 'usdttrc20',
+    pay_amount_crypto: 1000,
+    pay_amount_crypto_text: '1000',
+    expected_price_usd_cents: 100000,
     status: 'waiting',
   });
 
@@ -84,9 +104,10 @@ function createMockDb() {
     prepare: (query) => ({
       bind: (...args) => ({
         first: async () => {
-          if (query.includes('FROM crypto_payments WHERE order_id = ? OR id = ?')) {
-            const [orderId, paymentId] = args;
-            return payments.get(orderId) || payments.get(paymentId) || null;
+          if (query.includes('FROM crypto_payments WHERE id = ? AND order_id = ?')) {
+            const [paymentId, orderId] = args;
+            const payment = payments.get(orderId);
+            return payment?.id === paymentId ? payment : null;
           }
           if (query.includes('FROM orders WHERE id = ?') || query.includes('FROM orders WHERE LOWER(id) = ?')) {
             const [orderId] = args;
@@ -112,11 +133,14 @@ function createMockDb() {
           return null;
         },
         run: async () => {
-          if (query.includes('UPDATE crypto_payments SET status = ?')) {
+          if (query.includes("SET status = 'review_required'")) {
+            const rec = payments.get(args[1]);
+            if (rec) rec.status = 'review_required';
+          } else if (query.includes('UPDATE crypto_payments') && query.includes('SET status = ?')) {
             const [status] = args;
-            const orderId = args[args.length - 2];
-            const paymentId = args[args.length - 1];
-            const rec = payments.get(orderId) || payments.get(paymentId);
+            const paymentId = args[args.length - 2];
+            const orderId = args[args.length - 1];
+            const rec = payments.get(orderId);
             if (rec) {
               rec.status = status;
               if (query.includes('tx_hash = ?')) {
@@ -131,6 +155,12 @@ function createMockDb() {
               rec.status = status;
               rec.fulfillment_status = fulfillmentStatus;
             }
+          } else if (query.includes("UPDATE orders SET status = 'failed'")) {
+            const rec = orders.get(args[0]);
+            if (rec) rec.status = 'failed';
+          } else if (query.includes("UPDATE orders SET status = 'refunded'")) {
+            const rec = orders.get(args[0]);
+            if (rec) rec.status = 'refunded';
           } else if (query.includes('INSERT INTO inbound_emails')) {
             const [
               id, provider_email_id, message_id, in_reply_to, references_header,
@@ -147,6 +177,7 @@ function createMockDb() {
         all: async () => ({ results: [] }),
       }),
     }),
+    batch: async (statements) => Promise.all(statements.map((statement) => statement.run())),
   };
 }
 
@@ -164,7 +195,7 @@ await runAsyncTest('NOWPayments Case 1: Missing server CRYPTO_WEBHOOK_SECRET ret
   const db = createMockDb();
   const envWithoutSecret = { DB: db }; // No CRYPTO_WEBHOOK_SECRET
 
-  const payload = { payment_id: 'pay_sec_test_001', order_id: 'ord_3a8b9f12', payment_status: 'finished' };
+  const payload = createNowPaymentsPayload();
   const hmac = generateNowPaymentsHmac(payload, TEST_CRYPTO_SECRET);
 
   const req = new Request('https://geelarkflows.com/api/webhooks/crypto', {
@@ -187,7 +218,7 @@ await runAsyncTest('NOWPayments Case 2: Missing x-nowpayments-sig header returns
   const db = createMockDb();
   const env = { DB: db, CRYPTO_WEBHOOK_SECRET: TEST_CRYPTO_SECRET };
 
-  const payload = { payment_id: 'pay_sec_test_001', order_id: 'ord_3a8b9f12', payment_status: 'finished' };
+  const payload = createNowPaymentsPayload();
 
   const req = new Request('https://geelarkflows.com/api/webhooks/crypto', {
     method: 'POST',
@@ -208,7 +239,7 @@ await runAsyncTest('NOWPayments Case 3: Malformed signature string returns 401 U
   const db = createMockDb();
   const env = { DB: db, CRYPTO_WEBHOOK_SECRET: TEST_CRYPTO_SECRET };
 
-  const payload = { payment_id: 'pay_sec_test_001', order_id: 'ord_3a8b9f12', payment_status: 'finished' };
+  const payload = createNowPaymentsPayload();
 
   const req = new Request('https://geelarkflows.com/api/webhooks/crypto', {
     method: 'POST',
@@ -226,7 +257,7 @@ await runAsyncTest('NOWPayments Case 4: Incorrect signature signed with wrong se
   const db = createMockDb();
   const env = { DB: db, CRYPTO_WEBHOOK_SECRET: TEST_CRYPTO_SECRET };
 
-  const payload = { payment_id: 'pay_sec_test_001', order_id: 'ord_3a8b9f12', payment_status: 'finished' };
+  const payload = createNowPaymentsPayload();
   const forgedHmac = generateNowPaymentsHmac(payload, 'wrong_attacker_secret_999');
 
   const req = new Request('https://geelarkflows.com/api/webhooks/crypto', {
@@ -245,7 +276,7 @@ await runAsyncTest('NOWPayments Case 5: Tampered payload after signature generat
   const db = createMockDb();
   const env = { DB: db, CRYPTO_WEBHOOK_SECRET: TEST_CRYPTO_SECRET };
 
-  const originalPayload = { payment_id: 'pay_sec_test_001', order_id: 'ord_3a8b9f12', payment_status: 'waiting' };
+  const originalPayload = createNowPaymentsPayload('waiting');
   const hmac = generateNowPaymentsHmac(originalPayload, TEST_CRYPTO_SECRET);
 
   // Attacker modifies payment_status to 'finished' without valid secret
@@ -267,12 +298,9 @@ await runAsyncTest('NOWPayments Case 6: Valid correctly signed HMAC payload retu
   const db = createMockDb();
   const env = { DB: db, CRYPTO_WEBHOOK_SECRET: TEST_CRYPTO_SECRET };
 
-  const payload = {
-    payment_id: 'pay_sec_test_001',
-    order_id: 'ord_3a8b9f12',
-    payment_status: 'finished',
+  const payload = createNowPaymentsPayload('finished', {
     outcome_tx_hash: '0xValidTxHash1234567890abcdef',
-  };
+  });
   const hmac = generateNowPaymentsHmac(payload, TEST_CRYPTO_SECRET);
 
   const req = new Request('https://geelarkflows.com/api/webhooks/crypto', {
@@ -293,7 +321,7 @@ await runAsyncTest('NOWPayments Case 7: Invalid webhook performs ZERO order/paym
   const db = createMockDb();
   const env = { DB: db, CRYPTO_WEBHOOK_SECRET: TEST_CRYPTO_SECRET };
 
-  const payload = { payment_id: 'pay_sec_test_001', order_id: 'ord_3a8b9f12', payment_status: 'finished' };
+  const payload = createNowPaymentsPayload();
 
   const req = new Request('https://geelarkflows.com/api/webhooks/crypto', {
     method: 'POST',
@@ -312,7 +340,7 @@ await runAsyncTest('NOWPayments Case 8: Duplicate valid webhook idempotently suc
   const db = createMockDb();
   const env = { DB: db, CRYPTO_WEBHOOK_SECRET: TEST_CRYPTO_SECRET };
 
-  const payload = { payment_id: 'pay_sec_test_001', order_id: 'ord_3a8b9f12', payment_status: 'finished' };
+  const payload = createNowPaymentsPayload();
   const hmac = generateNowPaymentsHmac(payload, TEST_CRYPTO_SECRET);
 
   const sendWebhook = () =>
@@ -340,12 +368,9 @@ await runAsyncTest('NOWPayments Case 9: GeeLark Setup order transitions to setup
   const db = createMockDb();
   const env = { DB: db, CRYPTO_WEBHOOK_SECRET: TEST_CRYPTO_SECRET };
 
-  const payload = {
-    payment_id: 'pay_sec_test_001',
-    order_id: 'ord_3a8b9f12',
-    payment_status: 'finished',
+  const payload = createNowPaymentsPayload('finished', {
     outcome_tx_hash: '0xHash8899',
-  };
+  });
   const hmac = generateNowPaymentsHmac(payload, TEST_CRYPTO_SECRET);
 
   const req = new Request('https://geelarkflows.com/api/webhooks/crypto', {
@@ -362,11 +387,11 @@ await runAsyncTest('NOWPayments Case 9: GeeLark Setup order transitions to setup
 });
 
 // 10. Invalid status/event does not mark an order paid
-await runAsyncTest('NOWPayments Case 10: Failed/expired status does not mark order as paid', async () => {
+await runAsyncTest('NOWPayments Case 10: Failed/expired status closes the unpaid order without marking it paid', async () => {
   const db = createMockDb();
   const env = { DB: db, CRYPTO_WEBHOOK_SECRET: TEST_CRYPTO_SECRET };
 
-  const payload = { payment_id: 'pay_sec_test_001', order_id: 'ord_3a8b9f12', payment_status: 'expired' };
+  const payload = createNowPaymentsPayload('expired');
   const hmac = generateNowPaymentsHmac(payload, TEST_CRYPTO_SECRET);
 
   const req = new Request('https://geelarkflows.com/api/webhooks/crypto', {
@@ -377,8 +402,25 @@ await runAsyncTest('NOWPayments Case 10: Failed/expired status does not mark ord
 
   const res = await app.request(req, undefined, env);
   assert.equal(res.status, 200);
-  assert.equal(db.orders.get('ord_3a8b9f12').status, 'pending');
+  assert.equal(db.orders.get('ord_3a8b9f12').status, 'failed');
   assert.equal(db.payments.get('ord_3a8b9f12').status, 'expired');
+});
+
+await runAsyncTest('NOWPayments Case 11: Signed underpayment is quarantined for manual review', async () => {
+  const db = createMockDb();
+  const env = { DB: db, CRYPTO_WEBHOOK_SECRET: TEST_CRYPTO_SECRET };
+  const payload = createNowPaymentsPayload('finished', { actually_paid: '999.99' });
+  const hmac = generateNowPaymentsHmac(payload, TEST_CRYPTO_SECRET);
+  const res = await app.request(new Request('https://geelarkflows.com/api/webhooks/crypto', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-nowpayments-sig': hmac },
+    body: JSON.stringify(payload),
+  }), undefined, env);
+
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).status, 'manual_review');
+  assert.equal(db.orders.get('ord_3a8b9f12').status, 'pending');
+  assert.equal(db.payments.get('ord_3a8b9f12').status, 'review_required');
 });
 
 // ================================================================

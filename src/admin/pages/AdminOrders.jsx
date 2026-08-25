@@ -93,8 +93,12 @@ export default function AdminOrders({ navigate, lastSyncedAt }) {
             <select className="admin-select" value={fulfillment} onChange={(e) => setFulfillment(e.target.value)}>
               <option value="all">All Fulfillment</option>
               <option value="not_ready">Not Ready</option>
-              <option value="processing">Processing</option>
-              <option value="delivered">Delivered</option>
+              <option value="fulfillment_pending">Fulfillment Pending</option>
+              <option value="package_preparing">Package Preparing</option>
+              <option value="package_delivered">Package Delivered</option>
+              <option value="setup_pending">Setup Pending</option>
+              <option value="setup_in_progress">Setup In Progress</option>
+              <option value="setup_completed">Setup Completed</option>
               <option value="failed">Failed</option>
             </select>
           </div>

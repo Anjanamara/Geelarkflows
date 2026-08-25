@@ -1,3 +1,3 @@
 import app from '../../src/worker.js';
 
-export default app;
+export const onRequest = ({ request, env }) => app.fetch(request, env);

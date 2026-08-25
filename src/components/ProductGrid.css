@@ -1,12 +1,12 @@
 .product-grid {
-  margin-top: 22px;
+  margin-top: 18px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
   gap: 16px;
 }
 
 .empty-grid-container {
-  min-height: 390px;
+  min-height: 320px;
   margin-top: 22px;
   padding: 60px 24px;
   display: flex;
@@ -14,9 +14,13 @@
   align-items: center;
   justify-content: center;
   border: 1px dashed var(--border-medium);
-  border-radius: 12px;
+  border-radius: 16px;
   background: var(--bg-card);
   text-align: center;
+}
+
+@media (max-width: 540px) {
+  .product-grid { gap: 12px; }
 }
 
 .empty-code {

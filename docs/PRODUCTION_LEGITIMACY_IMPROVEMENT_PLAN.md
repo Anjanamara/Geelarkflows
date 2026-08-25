@@ -1,5 +1,7 @@
 # GeeLark Flows — Production Legitimacy & CRO Improvement Plan
 
+> Archived historical plan. The current production-hardening controls and remaining operator launch steps are documented in `README.md`.
+
 **Document Version**: 1.0.0  
 **Date**: August 20, 2026  
 **Status**: PROPOSAL — Awaiting Explicit Approval Before Execution  

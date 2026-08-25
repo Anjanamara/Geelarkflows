@@ -3,11 +3,6 @@ import './ContactPage.css';
 
 export default function ContactPage({ navigate, onOpenCustomRequest }) {
   useEffect(() => {
-    document.title = 'Contact Support & Help | GeeLark Flows';
-    const desc = document.head.querySelector('meta[name="description"]');
-    if (desc) {
-      desc.setAttribute('content', 'Contact GeeLark Flows support for order assistance, crypto payment confirmation, GeeLark setup coordination, or custom RPA workflow development.');
-    }
     window.scrollTo(0, 0);
   }, []);
 
@@ -39,7 +34,9 @@ export default function ContactPage({ navigate, onOpenCustomRequest }) {
       <header className="contact-page-header">
         <div className="contact-header-inner">
           <a href="/" className="contact-brand-lockup" onClick={handleHomeClick} aria-label="GeeLark Flows home">
-            <span className="brand-mark">GF</span>
+            <span className="brand-mark" aria-hidden="true">
+              <img src="/logo-mark.svg" alt="" width="42" height="42" />
+            </span>
             <span className="brand-text">
               <strong>GeeLark</strong>
               <small>Flows</small>

@@ -1,4 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="logo-title logo-desc">
+  <title id="logo-title">GeeLark Flows</title>
+  <desc id="logo-desc">A continuous letter G that becomes a forward flow arrow.</desc>
   <defs>
     <linearGradient id="flow-gradient" x1="8" y1="10" x2="55" y2="51" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#B8AFFF"/>
@@ -6,7 +8,6 @@
       <stop offset="1" stop-color="#45D8E8"/>
     </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="15" fill="#070B12"/>
   <path d="M47 18C43 12.5 36.8 9.5 29.8 9.5C18.6 9.5 9.5 18.6 9.5 30S18.6 50.5 30 50.5C39.2 50.5 47 44.5 49.7 36" fill="none" stroke="url(#flow-gradient)" stroke-width="7" stroke-linecap="round"/>
   <path d="M30.5 32H53M46 25L53 32L46 39" fill="none" stroke="url(#flow-gradient)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

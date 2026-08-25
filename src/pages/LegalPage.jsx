@@ -3,12 +3,6 @@ import './LegalPage.css';
 
 export default function LegalPage({ type = 'terms', navigate }) {
   useEffect(() => {
-    const titles = {
-      terms: 'Terms of Service | GeeLark Flows',
-      privacy: 'Privacy Policy | GeeLark Flows',
-      'refund-policy': 'Refund & Cancellation Policy | GeeLark Flows',
-    };
-    document.title = titles[type] || 'Legal Policies | GeeLark Flows';
     window.scrollTo(0, 0);
   }, [type]);
 
@@ -27,7 +21,9 @@ export default function LegalPage({ type = 'terms', navigate }) {
       <header className="legal-page-header">
         <div className="legal-header-inner">
           <a href="/" className="legal-brand-lockup" onClick={(e) => { e.preventDefault(); handleNav('/'); }} aria-label="GeeLark Flows home">
-            <span className="brand-mark">GF</span>
+            <span className="brand-mark" aria-hidden="true">
+              <img src="/logo-mark.svg" alt="" width="42" height="42" />
+            </span>
             <span className="brand-text">
               <strong>GeeLark</strong>
               <small>Flows</small>
@@ -87,7 +83,7 @@ export default function LegalPage({ type = 'terms', navigate }) {
                 <p className="legal-doc-summary">
                   Terms governing the purchase, licensing, and usage of GeeLark automation workflow packages.
                 </p>
-                <div className="legal-meta-date">Last Updated: August 22, 2026 · Operator: GeeLark Flows (United States)</div>
+                <div className="legal-meta-date">Last Updated: August 25, 2026 · Independent operator: GeeLark Flows · support@geelarkflows.com</div>
               </div>
 
               <div className="legal-body-content">
@@ -98,6 +94,12 @@ export default function LegalPage({ type = 'terms', navigate }) {
                   </p>
                   <p>
                     By placing an order, completing payment, downloading files, or requesting setup services, you agree to these Terms. If you do not agree, please do not purchase or use our products.
+                  </p>
+                  <p>
+                    You must be at least 18 years old and legally able to enter a binding agreement to purchase from this site.
+                  </p>
+                  <p>
+                    <strong>Independent service notice:</strong> GeeLark Flows is an independent digital-products business. It is not affiliated with, endorsed by, or sponsored by the owner of the GeeLark software or trademark. Third-party names identify compatible products only.
                   </p>
                 </section>
 
@@ -154,6 +156,30 @@ export default function LegalPage({ type = 'terms', navigate }) {
                   <p>
                     To the extent permitted by applicable law, GeeLark Flows is not responsible for third-party platform changes, customer misuse, account suspensions, or failure to achieve expected business outcomes.
                   </p>
+                  <p>
+                    Except for any express commitment stated in the product description and any rights that cannot legally be excluded, products and services are supplied “as is” and “as available,” without implied warranties of merchantability, fitness for a particular purpose, or non-infringement.
+                  </p>
+                </section>
+
+                <section className="legal-section">
+                  <h2>7. Limitation of Liability</h2>
+                  <p>
+                    To the maximum extent permitted by applicable law, GeeLark Flows will not be liable for indirect, incidental, special, consequential, exemplary, or lost-profit damages. Our aggregate liability arising from a particular order will not exceed the amount you paid for that order. This limitation does not restrict liability or consumer rights that cannot legally be limited.
+                  </p>
+                </section>
+
+                <section className="legal-section">
+                  <h2>8. Intellectual Property & Third-Party Marks</h2>
+                  <p>
+                    The delivered workflow code, documentation, storefront content, and original branding remain protected by their respective intellectual-property rights. GeeLark and other platform names and marks belong to their respective owners and are used only to describe compatibility.
+                  </p>
+                </section>
+
+                <section className="legal-section">
+                  <h2>9. Disputes, Changes & Contact</h2>
+                  <p>
+                    Contact <code>support@geelarkflows.com</code> first so we can attempt an informal resolution. Applicable law and any non-waivable consumer protections continue to apply. We may update these Terms prospectively by publishing a revised date; the terms shown when an order is placed govern that order unless law requires otherwise.
+                  </p>
                 </section>
               </div>
             </>
@@ -167,7 +193,7 @@ export default function LegalPage({ type = 'terms', navigate }) {
                 <p className="legal-doc-summary">
                   How GeeLark Flows collects, processes, and protects customer emails, order records, and technical request data.
                 </p>
-                <div className="legal-meta-date">Last Updated: August 22, 2026 · Operator: GeeLark Flows (United States)</div>
+                <div className="legal-meta-date">Last Updated: August 25, 2026 · Independent operator: GeeLark Flows · support@geelarkflows.com</div>
               </div>
 
               <div className="legal-body-content">
@@ -202,6 +228,9 @@ export default function LegalPage({ type = 'terms', navigate }) {
                   <p>
                     We rely on technical infrastructure providers: Cloudflare (hosting, Workers, D1 database, R2 storage), NOWPayments (cryptocurrency invoice processing), and Resend (transactional email delivery).
                   </p>
+                  <p>
+                    Payment QR codes are generated inside your browser; payment addresses are not sent to an external QR-code service. Purchased files are delivered through private, expiring links validated by our Cloudflare Worker.
+                  </p>
                 </section>
 
                 <section className="legal-section">
@@ -214,7 +243,14 @@ export default function LegalPage({ type = 'terms', navigate }) {
                 <section className="legal-section">
                   <h2>6. Children's Privacy</h2>
                   <p>
-                    The service is not directed to children under 13.
+                    Purchases are intended only for adults who are at least 18 years old. The service is not directed to children, and we do not knowingly collect personal information from children.
+                  </p>
+                </section>
+
+                <section className="legal-section">
+                  <h2>7. Security & Privacy Requests</h2>
+                  <p>
+                    We use access controls, hashed customer-status and download tokens, signed provider webhooks, restricted administrative sessions, and audit records to protect operational data. No system is completely secure. To request access, correction, or deletion where applicable, contact <code>support@geelarkflows.com</code>; we may need to verify your identity and retain records required for fraud prevention, accounting, disputes, or legal compliance.
                   </p>
                 </section>
               </div>
@@ -229,7 +265,7 @@ export default function LegalPage({ type = 'terms', navigate }) {
                 <p className="legal-doc-summary">
                   Policies regarding digital automation package delivery, GeeLark setup coordination, and cryptocurrency transaction handling.
                 </p>
-                <div className="legal-meta-date">Last Updated: August 22, 2026 · Operator: GeeLark Flows (United States)</div>
+                <div className="legal-meta-date">Last Updated: August 25, 2026 · Independent operator: GeeLark Flows · support@geelarkflows.com</div>
               </div>
 
               <div className="legal-body-content">

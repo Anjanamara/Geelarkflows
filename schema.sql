@@ -1,16 +1,22 @@
 -- Cloudflare D1 Migration Schema for GeeLark Flows
 -- Orders & Crypto Payments (Core eCommerce)
 
+PRAGMA foreign_keys = ON;
+
 CREATE TABLE IF NOT EXISTS orders (
   id TEXT PRIMARY KEY,
   customer_email TEXT NOT NULL,
   total_usd REAL NOT NULL,
+  total_usd_cents INTEGER NOT NULL,
   delivery_method TEXT NOT NULL DEFAULT 'download_package', -- 'download_package' | 'geelark_setup'
   workflow_subtotal REAL NOT NULL DEFAULT 0,
+  workflow_subtotal_cents INTEGER NOT NULL DEFAULT 0,
   setup_fee REAL NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'pending',
+  setup_fee_cents INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'awaiting_payment', 'paid', 'processing', 'completed', 'cancelled', 'refunded', 'failed')),
   items TEXT NOT NULL,
-  fulfillment_status TEXT NOT NULL DEFAULT 'not_ready', -- 'not_ready' | 'fulfillment_pending' | 'package_preparing' | 'package_delivered' | 'setup_pending' | 'setup_in_progress' | 'setup_completed' | 'failed'
+  fulfillment_status TEXT NOT NULL DEFAULT 'not_ready' CHECK (fulfillment_status IN ('not_ready', 'fulfillment_pending', 'package_preparing', 'package_delivered', 'setup_pending', 'setup_in_progress', 'setup_completed', 'failed')),
+  status_token_hash TEXT,
   fulfillment_notes TEXT,
   delivered_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -19,16 +25,21 @@ CREATE TABLE IF NOT EXISTS orders (
 
 CREATE TABLE IF NOT EXISTS crypto_payments (
   id TEXT PRIMARY KEY,
-  order_id TEXT NOT NULL,
+  order_id TEXT NOT NULL UNIQUE,
   currency TEXT NOT NULL,
+  network_id TEXT NOT NULL,
+  provider_currency TEXT NOT NULL,
   pay_address TEXT NOT NULL,
   pay_amount_crypto REAL NOT NULL,
+  pay_amount_crypto_text TEXT NOT NULL,
   exchange_rate_usd REAL NOT NULL,
+  exchange_rate_usd_text TEXT NOT NULL,
+  expected_price_usd_cents INTEGER NOT NULL,
   tx_hash TEXT,
   confirmations INTEGER DEFAULT 0,
   required_confirmations INTEGER DEFAULT 2,
   expires_at DATETIME NOT NULL,
-  status TEXT NOT NULL DEFAULT 'waiting',
+  status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'confirming', 'sending', 'partially_paid', 'confirmed', 'finished', 'paid', 'failed', 'expired', 'refunded', 'review_required')),
   verification_source TEXT NOT NULL DEFAULT 'nowpayments_ipn',
   verified_by_admin TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -85,10 +96,32 @@ CREATE TABLE IF NOT EXISTS order_fulfillment_logs (
   idempotency_key TEXT UNIQUE NOT NULL,
   triggered_by TEXT NOT NULL, -- 'system_webhook' | 'admin:<email>'
   recipient_email TEXT NOT NULL,
-  status TEXT NOT NULL, -- 'dispatched' | 'failed'
+  status TEXT NOT NULL CHECK (status IN ('sending', 'dispatched', 'failed')),
   error_message TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+);
+
+-- Private, expiring tokens used to stream only the flows purchased in an order.
+CREATE TABLE IF NOT EXISTS order_download_tokens (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL,
+  token_hash TEXT UNIQUE NOT NULL,
+  expires_at DATETIME NOT NULL,
+  created_by TEXT NOT NULL,
+  download_count INTEGER NOT NULL DEFAULT 0,
+  last_downloaded_at DATETIME,
+  revoked_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+);
+
+-- Narrow per-checkout status rate limiter. Keys are hashes, never raw customer tokens.
+CREATE TABLE IF NOT EXISTS api_rate_limits (
+  key TEXT PRIMARY KEY,
+  window_started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  request_count INTEGER NOT NULL DEFAULT 1
 );
 
 -- Login Rate Limiting (IP & Email based)
@@ -149,6 +182,20 @@ CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires_at ON admin_sessions(expir
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_fulfillment_logs_order_id ON order_fulfillment_logs(order_id);
+CREATE INDEX IF NOT EXISTS idx_download_tokens_order_id ON order_download_tokens(order_id);
+CREATE INDEX IF NOT EXISTS idx_download_tokens_expires_at ON order_download_tokens(expires_at);
+
+CREATE TRIGGER IF NOT EXISTS audit_logs_prevent_update
+BEFORE UPDATE ON audit_logs
+BEGIN
+  SELECT RAISE(ABORT, 'audit_logs are append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_logs_prevent_delete
+BEFORE DELETE ON audit_logs
+BEGIN
+  SELECT RAISE(ABORT, 'audit_logs are append-only');
+END;
 CREATE INDEX IF NOT EXISTS idx_inbound_emails_received_at ON inbound_emails(received_at);
 CREATE INDEX IF NOT EXISTS idx_inbound_emails_is_read ON inbound_emails(is_read);
 CREATE INDEX IF NOT EXISTS idx_inbound_emails_is_archived ON inbound_emails(is_archived);

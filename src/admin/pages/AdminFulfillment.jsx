@@ -46,7 +46,7 @@ export default function AdminFulfillment({ navigate, lastSyncedAt }) {
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Resend failed.');
       fetchFulfillmentQueue();
-      alert(`Package re-dispatched successfully for order #${orderId}`);
+      alert(`Secure fulfillment email sent for order #${orderId}`);
     } catch (err) {
       alert(`Fulfillment notice: ${err.message}`);
     } finally {
@@ -144,7 +144,7 @@ export default function AdminFulfillment({ navigate, lastSyncedAt }) {
                           }}
                           disabled={actionLoading === item.id}
                         >
-                          {actionLoading === item.id ? 'Dispatching...' : '⚡ Resend'}
+                          {actionLoading === item.id ? 'Dispatching...' : '⚡ Deliver securely'}
                         </button>
                       ) : (
                         <span style={{ fontSize: '11px', color: 'var(--admin-text-muted)' }}>Awaiting Payment</span>

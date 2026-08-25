@@ -65,9 +65,11 @@ await runAsyncTest('NOWPayments Vector 1: Precomputed static HMAC accepts recurs
     CRYPTO_WEBHOOK_SECRET: NP_TEST_SECRET,
   });
 
-  assert.equal(res.status, 200);
+  // A valid signature proceeds to payload validation. This vector intentionally
+  // omits invoice fields, so 400 (rather than 401) proves the HMAC was accepted.
+  assert.equal(res.status, 400);
   const data = await res.json();
-  assert.equal(data.success, true);
+  assert.match(data.error, /missing required invoice/i);
 });
 
 // 2. Tampered nested key/value fails verification
@@ -111,7 +113,7 @@ await runAsyncTest('NOWPayments Vector 3: NOWPAYMENTS_IPN_SECRET binding operate
     NOWPAYMENTS_IPN_SECRET: NP_TEST_SECRET, // Fallback binding name
   });
 
-  assert.equal(res.status, 200);
+  assert.equal(res.status, 400);
 });
 
 // ----------------------------------------------------------------

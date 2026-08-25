@@ -96,4 +96,4 @@
 
 All core operational, business identity, licensing, fulfillment, refund, cryptocurrency, and privacy decisions are now **100% resolved** according to the owner's approved direction.
 
-**Publication State**: Drafts exist in `docs/DRAFT_TERMS_OF_SERVICE.md`, `docs/DRAFT_PRIVACY_POLICY.md`, `docs/DRAFT_REFUND_POLICY.md`, and `src/pages/LegalPage.jsx`. The public routes remain **unpublished** pending final owner review and approval.
+**Publication State**: Terms, privacy, refund, and contact routes are published by `src/pages/LegalPage.jsx` and `src/pages/ContactPage.jsx`. The recorded owner decisions are implemented; qualified counsel should still review whether any more specific identity, jurisdiction, or business-address disclosure is legally required before launch.

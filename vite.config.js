@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import crypto from 'crypto';
 import { products } from './src/data/products.js';
+import { getNetworkConfig } from './src/data/paymentConfig.js';
 
 const devCatalogMap = new Map(
   (products || []).map((p) => [
@@ -32,7 +33,7 @@ if (localDevOrders.size === 0) {
       email: 'customer.alpha@example.com',
       totalUsd: 1400,
       status: 'paid',
-      fulfillmentStatus: 'delivered',
+      fulfillmentStatus: 'package_delivered',
       deliveredAt: new Date(Date.now() - 3600000).toISOString(),
       network: 'trc20',
       networkLabel: 'TRC-20',
@@ -57,7 +58,7 @@ if (localDevOrders.size === 0) {
       email: 'growth.agency@digitalops.io',
       totalUsd: 1250,
       status: 'processing',
-      fulfillmentStatus: 'processing',
+      fulfillmentStatus: 'package_preparing',
       deliveredAt: null,
       network: 'bep20',
       networkLabel: 'BEP-20',
@@ -102,6 +103,7 @@ if (localDevOrders.size === 0) {
   ];
 
   seedOrders.forEach((ord) => {
+    ord.statusToken = `dev_seed_status_${ord.orderId}`;
     localDevOrders.set(ord.orderId, ord);
     if (ord.paymentId) localDevOrders.set(ord.paymentId, ord);
   });
@@ -178,61 +180,8 @@ if (localDevOrders.size === 0) {
   });
 }
 
-const DEV_USDT_NETWORKS = {
-  trc20: {
-    id: 'trc20',
-    asset: 'USDT',
-    network: 'TRC-20',
-    blockchain: 'TRON',
-    nowpayments_currency: 'usdttrc20',
-    display_currency: 'USDT (TRC-20)',
-    full_label: 'TRC-20 / TRON',
-    min_amount_usd: 5,
-    explorer_base: 'https://tronscan.org/#/transaction/',
-    address_explorer: 'https://tronscan.org/#/address/',
-  },
-  erc20: {
-    id: 'erc20',
-    asset: 'USDT',
-    network: 'ERC-20',
-    blockchain: 'Ethereum',
-    nowpayments_currency: 'usdterc20',
-    display_currency: 'USDT (ERC-20)',
-    full_label: 'ERC-20 / Ethereum',
-    min_amount_usd: 15,
-    explorer_base: 'https://etherscan.io/tx/',
-    address_explorer: 'https://etherscan.io/address/',
-  },
-  bep20: {
-    id: 'bep20',
-    asset: 'USDT',
-    network: 'BEP-20',
-    blockchain: 'BNB Smart Chain',
-    nowpayments_currency: 'usdtbsc',
-    display_currency: 'USDT (BEP-20)',
-    full_label: 'BEP-20 / BNB Chain',
-    min_amount_usd: 5,
-    explorer_base: 'https://bscscan.com/tx/',
-    address_explorer: 'https://bscscan.com/address/',
-  },
-  sol: {
-    id: 'sol',
-    asset: 'USDT',
-    network: 'SOL',
-    blockchain: 'Solana',
-    nowpayments_currency: 'usdtsol',
-    display_currency: 'USDT (SOL)',
-    full_label: 'SOL / Solana',
-    min_amount_usd: 5,
-    explorer_base: 'https://solscan.io/tx/',
-    address_explorer: 'https://solscan.io/account/',
-  },
-};
-
 function resolveDevNetwork(input) {
-  if (!input) return DEV_USDT_NETWORKS['trc20'];
-  const cleanKey = String(input).toLowerCase().replace(/[^a-z0-9]/g, '');
-  return DEV_USDT_NETWORKS[cleanKey] || null;
+  return getNetworkConfig(input || 'trc20');
 }
 
 function parseCookies(header) {
@@ -249,7 +198,13 @@ function parseCookies(header) {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const apiKey = (env.NOWPAYMENTS_API_KEY || env.CRYPTO_GATEWAY_API_KEY || '').trim();
+  const livePaymentMockEnabled = env.ENABLE_LIVE_PAYMENT_MOCK === 'true';
+  const apiKey = livePaymentMockEnabled
+    ? (env.NOWPAYMENTS_API_KEY || env.CRYPTO_GATEWAY_API_KEY || '').trim()
+    : '';
+  const devAdminEmail = (env.DEV_ADMIN_EMAIL || '').trim().toLowerCase();
+  const devAdminPassword = env.DEV_ADMIN_PASSWORD || '';
+  const devWebhookSecret = env.DEV_CRYPTO_WEBHOOK_SECRET || '';
 
   return {
     base: '/',
@@ -319,12 +274,20 @@ export default defineConfig(({ mode }) => {
                   const body = JSON.parse(bodyStr || '{}');
                   const { email, network, payment_network, delivery_method, cart = [] } = body;
 
-                  if (!email || !Array.isArray(cart) || cart.length === 0) {
+                  const cleanEmail = String(email || '').trim().toLowerCase();
+                  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail) || cleanEmail.length > 254 || !Array.isArray(cart) || cart.length === 0) {
                     return sendJson(400, { success: false, error: 'Missing required checkout details' });
                   }
 
+                  if (cart.length > 50) {
+                    return sendJson(400, { success: false, error: 'Cart exceeds maximum allowed item count.' });
+                  }
+
                   const validDeliveryMethods = ['download_package', 'geelark_setup'];
-                  const deliveryMethod = validDeliveryMethods.includes(delivery_method) ? delivery_method : 'download_package';
+                  if (!validDeliveryMethods.includes(delivery_method)) {
+                    return sendJson(400, { success: false, error: 'Please select a valid delivery method.' });
+                  }
+                  const deliveryMethod = delivery_method;
 
                   const requestedNet = network || payment_network || 'trc20';
                   const netConfig = resolveDevNetwork(requestedNet);
@@ -362,7 +325,8 @@ export default defineConfig(({ mode }) => {
                     });
                   }
 
-                  const orderId = 'ord_' + Math.random().toString(36).substring(2, 9);
+                  const orderId = 'ord_' + crypto.randomBytes(16).toString('hex');
+                  const statusToken = crypto.randomBytes(32).toString('hex');
                   const workflowSubtotal = resolvedCart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
                   const setupFee = deliveryMethod === 'geelark_setup' ? (workflowSubtotal >= 300 ? 0 : 50) : 0;
                   const totalUsd = workflowSubtotal + setupFee;
@@ -376,7 +340,7 @@ export default defineConfig(({ mode }) => {
 
                   let payAddress = '';
                   let payAmountCrypto = Number(totalUsd.toFixed(2));
-                  let paymentId = 'pay_' + Math.random().toString(36).substring(2, 9);
+                  let paymentId = 'pay_' + crypto.randomBytes(16).toString('hex');
 
                   if (apiKey) {
                     try {
@@ -417,16 +381,24 @@ export default defineConfig(({ mode }) => {
                     }
                   }
 
+                  if (!payAddress && !livePaymentMockEnabled) {
+                    const fakeAddresses = {
+                      trc20: 'TXkP7mT5vR7nL2pY9wA6qK4cD8eF1gH3jB',
+                      erc20: '0x1111111111111111111111111111111111111111',
+                      bep20: '0x2222222222222222222222222222222222222222',
+                      sol: '11111111111111111111111111111111',
+                    };
+                    payAddress = fakeAddresses[netConfig.id];
+                  }
+
                   if (!payAddress) {
-                    return sendJson(502, {
-                      success: false,
-                      error: 'NOWPAYMENTS_API_KEY is not configured. Please provide your API key.',
-                    });
+                    return sendJson(502, { success: false, error: 'The explicitly enabled live payment mock could not create an invoice.' });
                   }
 
                   const orderRecord = {
                     orderId,
                     paymentId,
+                    statusToken,
                     email,
                     asset: 'USDT',
                     network: netConfig.id,
@@ -442,7 +414,6 @@ export default defineConfig(({ mode }) => {
                     payAmountCrypto,
                     payAddress,
                     expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-                    qrCodeUrl: `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(payAddress)}`,
                     status: 'waiting',
                     fulfillmentStatus: 'not_ready',
                     items: resolvedCart,
@@ -468,6 +439,25 @@ export default defineConfig(({ mode }) => {
               req.on('end', () => {
                 try {
                   const payload = JSON.parse(bodyStr || '{}');
+                  if (!devWebhookSecret) {
+                    return sendJson(503, { success: false, error: 'DEV_CRYPTO_WEBHOOK_SECRET is not configured.' });
+                  }
+                  const sortKeys = (value) => {
+                    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+                    return Object.keys(value).sort().reduce((result, key) => {
+                      result[key] = sortKeys(value[key]);
+                      return result;
+                    }, {});
+                  };
+                  const expectedSignature = crypto.createHmac('sha512', devWebhookSecret)
+                    .update(JSON.stringify(sortKeys(payload)))
+                    .digest('hex');
+                  const suppliedSignature = String(req.headers['x-nowpayments-sig'] || '');
+                  const signaturesMatch = suppliedSignature.length === expectedSignature.length
+                    && crypto.timingSafeEqual(Buffer.from(suppliedSignature), Buffer.from(expectedSignature));
+                  if (!signaturesMatch) {
+                    return sendJson(401, { success: false, error: 'Invalid HMAC signature.' });
+                  }
                   const orderId = payload.order_id;
                   const paymentStatus = payload.payment_status || 'finished';
 
@@ -476,8 +466,7 @@ export default defineConfig(({ mode }) => {
                     record.status = paymentStatus;
                     record.txHash = payload.outcome_tx_hash || payload.txid || '0x' + Math.random().toString(16).substring(2);
                     if (['confirmed', 'finished', 'paid'].includes(paymentStatus.toLowerCase())) {
-                      record.fulfillmentStatus = 'delivered';
-                      record.deliveredAt = new Date().toISOString();
+                      record.fulfillmentStatus = record.deliveryMethod === 'geelark_setup' ? 'setup_pending' : 'fulfillment_pending';
                     }
                     localDevOrders.set(orderId, record);
                     if (record.paymentId) localDevOrders.set(record.paymentId, record);
@@ -494,33 +483,14 @@ export default defineConfig(({ mode }) => {
             if (req.url?.startsWith('/api/checkout/status/') && req.method === 'GET') {
               const id = req.url.split('/api/checkout/status/')[1].split('?')[0];
               const record = localDevOrders.get(id);
-              let currentStatus = record ? record.status : 'waiting';
-              let isConfirmed = ['confirmed', 'finished', 'paid'].includes(currentStatus.toLowerCase());
-
-              const paymentId = record?.paymentId;
-              if (apiKey && paymentId && !isConfirmed && currentStatus === 'waiting') {
-                try {
-                  const nowPayCheck = await fetch(`https://api.nowpayments.io/v1/payment/${paymentId}`, {
-                    headers: { 'x-api-key': apiKey }
-                  });
-                  const nowPayStatusData = await nowPayCheck.json();
-                  if (nowPayStatusData && nowPayStatusData.payment_status) {
-                    const liveStatus = String(nowPayStatusData.payment_status).toLowerCase();
-                    if (['confirmed', 'finished', 'paid'].includes(liveStatus)) {
-                      currentStatus = liveStatus;
-                      if (record) {
-                        record.status = liveStatus;
-                        record.txHash = nowPayStatusData.outcome_tx_hash || nowPayStatusData.txid || record.txHash;
-                        record.fulfillmentStatus = 'delivered';
-                        record.deliveredAt = new Date().toISOString();
-                        localDevOrders.set(record.orderId, record);
-                        localDevOrders.set(paymentId, record);
-                      }
-                      isConfirmed = true;
-                    }
-                  }
-                } catch (syncErr) {}
+              const suppliedToken = req.headers['x-checkout-token'];
+              if (!record || !record.statusToken || suppliedToken !== record.statusToken) {
+                return sendJson(404, { success: false, error: 'Payment status not found.' });
               }
+
+              res.setHeader('Cache-Control', 'no-store, private');
+              const currentStatus = record.status || 'waiting';
+              const isConfirmed = ['confirmed', 'finished', 'paid'].includes(currentStatus.toLowerCase());
 
               return sendJson(200, {
                 success: true,
@@ -529,23 +499,23 @@ export default defineConfig(({ mode }) => {
                   orderId: record?.orderId || id,
                   paymentId: record?.paymentId || id,
                   status: currentStatus,
-                  orderStatus: isConfirmed ? 'paid' : (record?.status || 'pending'),
+                  orderStatus: isConfirmed ? 'paid' : (record.status || 'awaiting_payment'),
                   isConfirmed,
                   txHash: record?.txHash || null,
                   asset: 'USDT',
-                  network: record?.network || 'trc20',
-                  networkLabel: record?.networkLabel || 'TRC-20',
-                  blockchain: record?.blockchain || 'TRON',
-                  fullNetworkLabel: record?.fullNetworkLabel || 'TRC-20 / TRON',
-                  currency: record?.currency || 'USDT (TRC-20)',
-                  payCurrency: record?.payCurrencyTicker || 'USDTTRC20',
-                  deliveryMethod: record?.deliveryMethod || 'download_package',
-                  workflowSubtotal: record?.workflowSubtotal || record?.totalUsd || 0,
-                  setupFee: record?.setupFee || 0,
-                  totalUsd: record?.totalUsd || 0,
-                  payAmount: record?.payAmountCrypto || record?.totalUsd || 0,
-                  payAddress: record?.payAddress || '',
-                  fulfillmentStatus: record?.fulfillmentStatus || 'not_ready',
+                  network: record.network,
+                  networkLabel: record.networkLabel,
+                  blockchain: record.blockchain,
+                  fullNetworkLabel: record.fullNetworkLabel,
+                  currency: record.currency,
+                  payCurrency: record.payCurrencyTicker,
+                  deliveryMethod: record.deliveryMethod || 'download_package',
+                  workflowSubtotal: record.workflowSubtotal || record.totalUsd || 0,
+                  setupFee: record.setupFee || 0,
+                  totalUsd: record.totalUsd || 0,
+                  payAmount: record.payAmountCrypto || record.totalUsd || 0,
+                  payAddress: record.payAddress || '',
+                  fulfillmentStatus: record.fulfillmentStatus || 'not_ready',
                   confirmations: isConfirmed ? 2 : 0,
                   requiredConfirmations: 2,
                 },
@@ -657,11 +627,11 @@ export default defineConfig(({ mode }) => {
                   const body = JSON.parse(bodyStr || '{}');
                   const { email, password } = body;
 
-                  // Accepts standard default dev credentials
-                  if (
-                    (email === 'admin@geelarkflows.com' && password === 'GeelarkAdmin2026!#') ||
-                    (email === 'admin' && password === 'admin')
-                  ) {
+                  if (!devAdminEmail || !devAdminPassword) {
+                    return sendJson(503, { success: false, error: 'Set DEV_ADMIN_EMAIL and DEV_ADMIN_PASSWORD to enable local admin login.' });
+                  }
+
+                  if (String(email || '').toLowerCase() === devAdminEmail && password === devAdminPassword) {
                     const token = 'dev_token_' + Math.random().toString(36).substring(2);
                     const user = { id: 'usr_dev_admin', email: 'admin@geelarkflows.com', name: 'Primary Super Admin', role: 'SUPER_ADMIN' };
                     localDevSessions.set(token, user);
@@ -675,7 +645,7 @@ export default defineConfig(({ mode }) => {
                       created_at: new Date().toISOString(),
                     });
 
-                    res.setHeader('Set-Cookie', `gf_admin_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
+                    res.setHeader('Set-Cookie', `gf_admin_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200`);
                     return sendJson(200, { success: true, user });
                   }
 
@@ -701,7 +671,7 @@ export default defineConfig(({ mode }) => {
             if (req.url?.startsWith('/api/admin/auth/logout') && req.method === 'POST') {
               const cookies = parseCookies(req.headers.cookie);
               if (cookies.gf_admin_session) localDevSessions.delete(cookies.gf_admin_session);
-              res.setHeader('Set-Cookie', 'gf_admin_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
+              res.setHeader('Set-Cookie', 'gf_admin_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0');
               return sendJson(200, { success: true, message: 'Logged out.' });
             }
 
@@ -986,7 +956,7 @@ export default defineConfig(({ mode }) => {
                 const order = localDevOrders.get(orderId);
                 if (!order) return sendJson(404, { success: false, error: 'Order not found' });
 
-                order.fulfillmentStatus = 'delivered';
+                order.fulfillmentStatus = order.deliveryMethod === 'geelark_setup' ? 'setup_in_progress' : 'package_delivered';
                 order.deliveredAt = new Date().toISOString();
                 localDevOrders.set(orderId, order);
 
@@ -1266,7 +1236,8 @@ export default defineConfig(({ mode }) => {
     ],
     server: {
       port: 5173,
-      host: true,
+      host: env.VITE_DEV_HOST === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1',
+      strictPort: true,
     },
   };
 });

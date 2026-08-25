@@ -23,8 +23,6 @@ export default function CheckoutPage({ navigate }) {
   const [checkoutError, setCheckoutError] = useState(null);
   const [copied, setCopied] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
-  const [pollCount, setPollCount] = useState(0);
-
   const pollingTimerRef = useRef(null);
 
   // Pricing Engine (Authoritative mirror of backend logic)
@@ -73,7 +71,11 @@ export default function CheckoutPage({ navigate }) {
 
     try {
       const checkId = order.orderId || order.paymentId;
-      const response = await fetch(`/api/checkout/status/${checkId}`);
+      if (!order.statusToken) return;
+      const response = await fetch(`/api/checkout/status/${checkId}`, {
+        headers: { 'X-Checkout-Token': order.statusToken },
+        cache: 'no-store',
+      });
       if (!response.ok) return;
 
       const resData = await response.json();
@@ -107,19 +109,25 @@ export default function CheckoutPage({ navigate }) {
   // Polling Loop for active payments
   useEffect(() => {
     if (!activeOrder || (stage !== 'awaiting_payment' && stage !== 'verifying')) {
-      if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
+      if (pollingTimerRef.current) clearTimeout(pollingTimerRef.current);
       return;
     }
 
-    checkBackendPaymentStatus(activeOrder);
+    let cancelled = false;
+    let delayMs = 10000;
 
-    pollingTimerRef.current = setInterval(() => {
-      setPollCount((prev) => prev + 1);
-      checkBackendPaymentStatus(activeOrder);
-    }, 3500);
+    const poll = async () => {
+      await checkBackendPaymentStatus(activeOrder);
+      if (cancelled) return;
+      pollingTimerRef.current = setTimeout(poll, delayMs);
+      delayMs = Math.min(Math.round(delayMs * 1.5), 60000);
+    };
+
+    poll();
 
     return () => {
-      if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
+      cancelled = true;
+      if (pollingTimerRef.current) clearTimeout(pollingTimerRef.current);
     };
   }, [activeOrder, stage, checkBackendPaymentStatus]);
 
@@ -194,9 +202,22 @@ export default function CheckoutPage({ navigate }) {
 
       const resData = await response.json();
       if (resData.success && resData.data) {
+        let qrCodeUrl = null;
+        try {
+          const { toDataURL } = await import('qrcode');
+          qrCodeUrl = await toDataURL(resData.data.payAddress, {
+            width: 220,
+            margin: 1,
+            errorCorrectionLevel: 'M',
+          });
+        } catch (qrErr) {
+          console.warn('Local QR generation failed', qrErr.message);
+        }
+
         const frozenOrder = {
           orderId: resData.data.orderId,
           paymentId: resData.data.paymentId,
+          statusToken: resData.data.statusToken,
           payAddress: resData.data.payAddress,
           payAmountCrypto: resData.data.payAmountCrypto,
           currency: resData.data.currency,
@@ -205,7 +226,7 @@ export default function CheckoutPage({ navigate }) {
           blockchain: resData.data.blockchain,
           fullNetworkLabel: resData.data.fullNetworkLabel,
           payCurrencyTicker: resData.data.payCurrencyTicker,
-          qrCodeUrl: resData.data.qrCodeUrl,
+          qrCodeUrl,
           deliveryMethod: resData.data.deliveryMethod || deliveryMethod,
           workflowSubtotal: resData.data.workflowSubtotal || workflowSubtotal,
           setupFee: resData.data.setupFee ?? setupFee,
@@ -286,7 +307,9 @@ export default function CheckoutPage({ navigate }) {
               handleReturnToMarketplace();
             }}
           >
-            <span className="brand-mark">GF</span>
+            <span className="brand-mark" aria-hidden="true">
+              <img src="/logo-mark.svg" alt="" width="42" height="42" />
+            </span>
             <span className="brand-text">
               <strong>GeeLark</strong>
               <small>Flows</small>
@@ -340,7 +363,7 @@ export default function CheckoutPage({ navigate }) {
           {stage === 'form' && (
             isFormEmpty ? (
               <div className="empty-checkout-card">
-                <h2 className="empty-title">Your cart is empty</h2>
+                <h1 className="empty-title">Your cart is empty</h1>
                 <p className="empty-sub">Add workflows to your cart before proceeding to checkout.</p>
                 <button
                   type="button"
@@ -351,7 +374,12 @@ export default function CheckoutPage({ navigate }) {
                 </button>
               </div>
             ) : (
-              <div className="checkout-layout-grid">
+              <>
+                <header className="checkout-page-intro">
+                  <span>Secure checkout</span>
+                  <h1>Complete your workflow order.</h1>
+                </header>
+                <div className="checkout-layout-grid">
                 {/* Left Column: Numbered Sections */}
                 <div className="checkout-form-column">
                   <form onSubmit={handleAuthorizePayment}>
@@ -577,7 +605,8 @@ export default function CheckoutPage({ navigate }) {
                     </div>
                   </div>
                 </aside>
-              </div>
+                </div>
+              </>
             )
           )}
 
@@ -598,13 +627,15 @@ export default function CheckoutPage({ navigate }) {
 
                 <div className="payment-panel-content">
                   {/* QR Code */}
-                  <div className="qr-container">
-                    <img
-                      src={activeOrder.qrCodeUrl}
-                      alt={`${activeOrder.currency} Payment QR Code`}
-                      className="qr-img"
-                    />
-                  </div>
+                  {activeOrder.qrCodeUrl && (
+                    <div className="qr-container">
+                      <img
+                        src={activeOrder.qrCodeUrl}
+                        alt={`${activeOrder.currency} Payment QR Code`}
+                        className="qr-img"
+                      />
+                    </div>
+                  )}
 
                   {/* Amount Hero */}
                   <div className="payment-amount-block">

@@ -1,18 +1,41 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useCart } from '../context/CartContext';
 import { platforms } from '../data/products';
 import './ProductModal.css';
 
 export default function ProductModal({ product, onClose }) {
   const { cart, addToCart, addToCartWithAnimation, lastAddedId, openCart, openCheckout } = useCart();
+  const closeButtonRef = useRef(null);
+  const dialogRef = useRef(null);
 
   useEffect(() => {
     if (!product) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const previousFocus = document.activeElement;
+    document.body.style.overflow = 'hidden';
+    closeButtonRef.current?.focus();
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') onClose();
+      if (event.key === 'Tab') {
+        const controls = dialogRef.current?.querySelectorAll('button:not(:disabled), a[href], video[controls]');
+        if (!controls?.length) return;
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
     };
     document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+      previousFocus?.focus?.();
+    };
   }, [product, onClose]);
 
   if (!product) return null;
@@ -22,7 +45,6 @@ export default function ProductModal({ product, onClose }) {
   const isJustAdded = lastAddedId === product.id;
   const { details } = product;
 
-  // 1. Add to cart with animation (stays in browsing flow)
   const handleAddToCart = (event) => {
     if (isInCart) {
       onClose();
@@ -44,6 +66,7 @@ export default function ProductModal({ product, onClose }) {
   return (
     <div className="modal-overlay" onClick={onClose} role="presentation">
       <div
+        ref={dialogRef}
         className="modal-content"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
@@ -51,7 +74,7 @@ export default function ProductModal({ product, onClose }) {
         aria-labelledby="flow-modal-title"
         style={{ '--modal-accent': platform?.color || 'var(--accent-lime)' }}
       >
-        <button className="modal-close" onClick={onClose} aria-label="Close flow details">×</button>
+        <button ref={closeButtonRef} className="modal-close" onClick={onClose} aria-label="Close flow details">×</button>
 
         <div className="modal-header">
           <div className="modal-platform-line">
@@ -65,7 +88,7 @@ export default function ProductModal({ product, onClose }) {
           <p>{details.description}</p>
           <div className="modal-price-row">
             <div className="modal-price">${product.price.toLocaleString('en-US')}</div>
-            <span className="modal-price-sub">Reusable workflow · Instant delivery</span>
+            <span className="modal-price-sub">One purchase · Configured delivery · Unlimited runs</span>
             <button
               type="button"
               className="modal-quick-checkout-pill"

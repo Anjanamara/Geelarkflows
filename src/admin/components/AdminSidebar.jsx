@@ -28,7 +28,9 @@ export default function AdminSidebar({
       {isOpen && <div className="admin-modal-overlay" style={{ zIndex: 35 }} onClick={onClose} />}
       <aside className={`admin-sidebar ${isOpen ? 'open' : ''}`}>
         <div className="sidebar-brand">
-          <div className="sidebar-logo-badge">GF</div>
+          <div className="sidebar-logo-badge" aria-hidden="true">
+            <img src="/logo-mark.svg" alt="" />
+          </div>
           <div className="sidebar-title">
             <strong>GeeLark Admin</strong>
             <span>Operations</span>

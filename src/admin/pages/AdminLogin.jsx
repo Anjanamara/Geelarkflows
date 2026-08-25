@@ -38,7 +38,9 @@ export default function AdminLogin({ onLoginSuccess }) {
     <div className="login-screen-wrap">
       <div className="login-card">
         <div className="login-brand-header">
-          <div className="sidebar-logo-badge" style={{ width: '32px', height: '32px', fontSize: '13px' }}>GF</div>
+          <div className="sidebar-logo-badge" style={{ width: '32px', height: '32px' }} aria-hidden="true">
+            <img src="/logo-mark.svg" alt="" />
+          </div>
           <div>
             <h1 className="login-title">GeeLark Admin</h1>
             <p className="login-subtitle">Internal Order Operations & Fulfillment</p>

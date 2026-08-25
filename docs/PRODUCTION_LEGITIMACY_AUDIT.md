@@ -1,5 +1,7 @@
 # GeeLark Flows — Complete Production Legitimacy, Trust, UX, CRO & Security Audit
 
+> Archived historical review. Current implementation and launch instructions are documented in `README.md`; security-sensitive conclusions in this file may no longer describe the active code.
+
 **Document Version**: 1.0.0  
 **Audit Date**: August 20, 2026  
 **Auditor**: Antigravity Technical & Security Audit Agent  

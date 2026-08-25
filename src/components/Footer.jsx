@@ -41,14 +41,16 @@ export default function Footer({ navigate, onOpenCustomRequest }) {
           {/* Brand & Purpose Column */}
           <div className="footer-brand-col">
             <a href="/" className="footer-brand-lockup" onClick={(e) => { e.preventDefault(); handleNav('/'); }} aria-label="GeeLark Flows Home">
-              <span className="footer-brand-mark">GF</span>
+              <span className="footer-brand-mark" aria-hidden="true">
+                <img src="/logo-mark.svg" alt="" width="42" height="42" />
+              </span>
               <span className="footer-brand-text">
                 <strong>GeeLark</strong>
                 <small>Flows</small>
               </span>
             </a>
             <p className="footer-tagline">
-              Reusable mobile and social media automation flows built for reliable multi-account execution at scale.
+              Reusable mobile and social automation, configured for repeatable operations.
             </p>
           </div>
 
@@ -123,9 +125,10 @@ export default function Footer({ navigate, onOpenCustomRequest }) {
         <div className="footer-bottom-bar">
           <p className="footer-copyright">
             © {new Date().getFullYear()} GeeLark Flows. All rights reserved. Delivered workflows are reusable for authorized customer operations.
+            <br />Independent service; not affiliated with or endorsed by the owner of the GeeLark software or trademark.
           </p>
           <div className="footer-bottom-meta">
-            <span className="crypto-badge">Settled in USDT via NOWPayments</span>
+            <span className="crypto-badge"><i /> Secure USDT checkout via NOWPayments</span>
           </div>
         </div>
       </div>

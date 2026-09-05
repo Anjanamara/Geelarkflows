@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { useCart } from '../context/CartContext';
 import { products, platforms } from '../data/products';
 import { PROVEN_FLOW_NOTE, OUTCOME_DISCLAIMER, getCompatibilityNote } from '../data/trustCopy';
+import FloatingCart from '../components/FloatingCart';
 import './FlowDetailPage.css';
 
 export default function FlowDetailPage({ productId, navigate }) {
@@ -78,7 +79,10 @@ export default function FlowDetailPage({ productId, navigate }) {
               <small>Flows</small>
             </span>
           </a>
-          <a href="/" className="btn-back-to-marketplace" onClick={handleBackClick}>← Back to marketplace</a>
+          <div className="flow-detail-header-actions">
+            <FloatingCart />
+            <a href="/" className="btn-back-to-marketplace" onClick={handleBackClick}>← Back to marketplace</a>
+          </div>
         </div>
       </header>
 

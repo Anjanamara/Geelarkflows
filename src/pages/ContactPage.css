@@ -25,8 +25,8 @@
 .topic-title { font-size: var(--type-body-lg); line-height: 1.28; letter-spacing: -0.035em; }
 .topic-desc { margin-top: 14px; color: var(--text-secondary); font-size: var(--type-caption); line-height: 1.65; }
 .topic-list { margin: 16px 0 0; display: grid; gap: 7px; list-style: none; }
-.topic-list li { display: flex; align-items: flex-start; gap: 8px; color: var(--text-muted); font-size: var(--type-caption); line-height: 1.5; }
-.topic-list li::before { content: ''; width: 4px; height: 4px; margin-top: 5px; flex: 0 0 auto; border-radius: 50%; background: var(--accent-lime-dark); }
+.topic-list li { position: relative; padding-left: 16px; color: var(--text-muted); font-size: var(--type-caption); line-height: 1.5; }
+.topic-list li::before { content: ''; width: 4px; height: 4px; position: absolute; left: 0; top: 6px; border-radius: 50%; background: var(--accent-lime-dark); }
 .topic-action { margin-top: auto; padding-top: 20px; }
 .btn-topic-link, .btn-topic-action { min-height: 42px; padding: 0 13px; display: inline-flex; align-items: center; border: 1px solid var(--border-light); border-radius: 9px; background: var(--bg-secondary); color: var(--text-secondary); font-size: var(--type-caption); font-weight: 750; }
 .btn-topic-link:hover, .btn-topic-action:hover { background: var(--text-primary); color: var(--text-inverse); }

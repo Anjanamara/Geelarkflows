@@ -6,6 +6,7 @@
 .flow-detail-brand-lockup .brand-text strong { font-size: var(--type-small); }
 .flow-detail-brand-lockup .brand-text small { margin-top: 3px; color: var(--text-muted); font-size: var(--type-caption); }
 .btn-back-to-marketplace { min-height: 42px; padding: 0 13px; display: inline-flex; align-items: center; border: 1px solid var(--border-medium); border-radius: 9px; background: var(--bg-card); color: var(--text-secondary); font-size: var(--type-caption); font-weight: 700; }
+.flow-detail-header-actions { display: flex; align-items: center; gap: 10px; }
 
 .flow-detail-main { padding: 30px 0 clamp(70px, 9vw, 120px); }
 .flow-detail-layout-grid { width: min(var(--site-width), calc(100% - (var(--page-gutter) * 2))); margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(310px, 380px); gap: clamp(28px, 5vw, 68px); }

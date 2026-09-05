@@ -36,17 +36,8 @@ export function FilterProvider({ children }) {
       }
 
       // 2. Category Filter
-      if (selectedCategory !== 'all') {
-        if (selectedCategory === 'flows') {
-          if (product.type !== 'flow') return false;
-        } else if (selectedCategory.startsWith('accounts-')) {
-          const targetPlatform = selectedCategory.replace('accounts-', '');
-          if (product.type !== 'account' || product.platform !== targetPlatform) {
-            return false;
-          }
-        } else if (selectedCategory === 'accounts') {
-          if (product.type !== 'account') return false;
-        }
+      if (selectedCategory === 'flows' && product.type !== 'flow') {
+        return false;
       }
 
       // 3. Platform Multi-select Filter

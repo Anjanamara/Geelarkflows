@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { formatAdminDate } from '../dateUtils';
+import { formatStatusLabel } from '../formatUtils';
 
 export default function AdminOrders({ navigate, lastSyncedAt }) {
   const [orders, setOrders] = useState([]);
@@ -150,7 +152,7 @@ export default function AdminOrders({ navigate, lastSyncedAt }) {
                     <td className="font-mono" style={{ fontWeight: 700, color: 'var(--admin-text-primary)' }}>
                       {ord.id}
                     </td>
-                    <td className="font-mono">{new Date(ord.created_at).toLocaleDateString()}</td>
+                    <td className="font-mono">{formatAdminDate(ord.created_at)}</td>
                     <td title={ord.customer_email}>{ord.customer_email}</td>
                     <td>
                       <span title={ord.itemsSummary}>
@@ -170,7 +172,7 @@ export default function AdminOrders({ navigate, lastSyncedAt }) {
                     </td>
                     <td>
                       <span className={`status-badge ${ord.payment_status || 'waiting'}`}>
-                        {ord.payment_status || 'waiting'}
+                        {formatStatusLabel(ord.payment_status || 'waiting')}
                       </span>
                     </td>
                     <td>
@@ -178,7 +180,7 @@ export default function AdminOrders({ navigate, lastSyncedAt }) {
                     </td>
                     <td>
                       <span className={`status-badge ${ord.fulfillment_status || 'not_ready'}`}>
-                        {ord.fulfillment_status || 'not_ready'}
+                        {formatStatusLabel(ord.fulfillment_status || 'not_ready')}
                       </span>
                     </td>
                     <td>

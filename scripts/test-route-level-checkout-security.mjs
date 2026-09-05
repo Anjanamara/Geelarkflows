@@ -61,6 +61,8 @@ globalThis.fetch = async (url, options) => {
 // Mock D1 database to capture inserted orders and payments
 let lastInsertedOrder = null;
 let lastInsertedPayment = null;
+let lastCouponRedemption = null;
+let couponFixture = null;
 const mockDb = {
   prepare: (query) => {
     return {
@@ -76,10 +78,13 @@ const mockDb = {
                 delivery_method: args[4],
                 workflow_subtotal: args[5],
                 setup_fee: args[7],
-                status: args[9],
-                items: JSON.parse(args[10] || '[]'),
-                fulfillment_status: args[11],
-                status_token_hash: args[12],
+                coupon_code: args[9],
+                coupon_discount_usd: args[10],
+                coupon_discount_cents: args[11],
+                status: args[12],
+                items: JSON.parse(args[13] || '[]'),
+                fulfillment_status: args[14],
+                status_token_hash: args[15],
               };
             }
             if (query.includes('INSERT INTO crypto_payments')) {
@@ -91,9 +96,18 @@ const mockDb = {
                 verification_source: args[13],
               };
             }
+            if (query.includes('INSERT INTO coupon_redemptions')) {
+              lastCouponRedemption = {
+                id: args[0],
+                coupon_id: args[1],
+                order_id: args[2],
+                customer_email: args[3],
+                discount_cents: args[4],
+              };
+            }
             return { success: true };
           },
-          first: async () => null,
+          first: async () => query.includes('FROM coupon_codes') ? couponFixture : null,
           all: async () => ({ results: [] }),
         };
       },
@@ -113,6 +127,8 @@ async function executeCheckoutRoute(payload, scenario = {}) {
   providerScenario = scenario;
   lastInsertedOrder = null;
   lastInsertedPayment = null;
+  lastCouponRedemption = null;
+  couponFixture = scenario.coupon || null;
 
   const req = new Request('https://geelarkflows.com/api/checkout/create', {
     method: 'POST',
@@ -477,6 +493,68 @@ await runAsyncTest('Case 18: Checkout rejects a non-provider placeholder payment
   assert.equal(nowPaymentsFetches.length, 1);
   assert.equal(lastInsertedPayment, null);
   assert.doesNotMatch(JSON.stringify(data), /TMockReceivingAddress/);
+});
+
+await runAsyncTest('Case 19: Percentage coupon discounts authoritative catalog subtotal and gateway amount', async () => {
+  const { status, data } = await executeCheckoutRoute({
+    email: 'coupon@example.com',
+    delivery_method: 'download_package',
+    network: 'trc20',
+    coupon_code: 'save10',
+    cart: [{ id: 'instagram-account-creation', price: 1, quantity: 1 }],
+  }, {
+    coupon: {
+      id: 'cpn_save10', code: 'SAVE10', active: 1, discount_type: 'percentage', discount_value: 10,
+      min_subtotal_cents: 0, max_redemptions: null, redemption_count: 2, has_started: 1, has_not_expired: 1,
+    },
+  });
+
+  assert.equal(status, 200);
+  assert.equal(data.data.workflowSubtotal, 1000);
+  assert.equal(data.data.couponCode, 'SAVE10');
+  assert.equal(data.data.couponDiscount, 100);
+  assert.equal(data.data.totalUsd, 900);
+  assert.equal(lastNowPaymentsPayload.price_amount, 900);
+  assert.equal(lastInsertedOrder.coupon_code, 'SAVE10');
+  assert.equal(lastInsertedOrder.coupon_discount_cents, 10000);
+  assert.equal(lastCouponRedemption.coupon_id, 'cpn_save10');
+  assert.equal(lastCouponRedemption.discount_cents, 10000);
+});
+
+await runAsyncTest('Case 20: Coupon minimum spend is calculated from authoritative prices', async () => {
+  const { status, data } = await executeCheckoutRoute({
+    email: 'minimum@example.com',
+    delivery_method: 'geelark_setup',
+    network: 'trc20',
+    coupon_code: 'MIN500',
+    cart: [{ id: 'instagram-profile-edits', price: 9999, quantity: 1 }],
+  }, {
+    coupon: {
+      id: 'cpn_min500', code: 'MIN500', active: 1, discount_type: 'fixed_amount', discount_value: 2500,
+      min_subtotal_cents: 50000, max_redemptions: null, redemption_count: 0, has_started: 1, has_not_expired: 1,
+    },
+  });
+
+  assert.equal(status, 400);
+  assert.equal(data.success, false);
+  assert.match(data.error, /at least \$500\.00/);
+  assert.equal(lastNowPaymentsPayload, null);
+});
+
+await runAsyncTest('Case 21: Inactive or unknown coupons fail before payment provider contact', async () => {
+  const { status, data } = await executeCheckoutRoute({
+    email: 'invalid-coupon@example.com',
+    delivery_method: 'download_package',
+    network: 'trc20',
+    coupon_code: 'NOTREAL',
+    cart: [{ id: 'instagram-account-creation', quantity: 1 }],
+  });
+
+  assert.equal(status, 400);
+  assert.equal(data.success, false);
+  assert.match(data.error, /invalid|inactive/i);
+  assert.equal(lastNowPaymentsPayload, null);
+  assert.equal(lastInsertedOrder, null);
 });
 
 console.log('\n================================================================');

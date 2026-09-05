@@ -1,4 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import { formatAdminDateTime } from '../dateUtils';
+import { redirectIfUnauthorized } from '../apiUtils';
+import { formatStatusLabel } from '../formatUtils';
 
 export default function AdminFulfillment({ navigate, lastSyncedAt }) {
   const [queue, setQueue] = useState([]);
@@ -43,6 +46,7 @@ export default function AdminFulfillment({ navigate, lastSyncedAt }) {
           reason: 'Admin triggered re-delivery from fulfillment dashboard',
         }),
       });
+      if (redirectIfUnauthorized(res)) return;
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Resend failed.');
       fetchFulfillmentQueue();
@@ -117,7 +121,7 @@ export default function AdminFulfillment({ navigate, lastSyncedAt }) {
                     </td>
                     <td>
                       <span className={`status-badge ${item.payment_status || 'waiting'}`}>
-                        {item.payment_status || 'waiting'}
+                        {formatStatusLabel(item.payment_status || 'waiting')}
                       </span>
                     </td>
                     <td className="font-mono" style={{ fontWeight: 700 }}>
@@ -125,11 +129,11 @@ export default function AdminFulfillment({ navigate, lastSyncedAt }) {
                     </td>
                     <td>
                       <span className={`status-badge ${item.fulfillment_status || 'not_ready'}`}>
-                        {item.fulfillment_status || 'not_ready'}
+                        {formatStatusLabel(item.fulfillment_status || 'not_ready')}
                       </span>
                     </td>
                     <td className="font-mono" style={{ fontSize: '11px' }}>
-                      {item.delivered_at ? new Date(item.delivered_at).toLocaleString() : 'Pending'}
+                      {formatAdminDateTime(item.delivered_at, 'Pending')}
                     </td>
                     <td className="font-mono">{item.attempt_count || 1}</td>
                     <td>

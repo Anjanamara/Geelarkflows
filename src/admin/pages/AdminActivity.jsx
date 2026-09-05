@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { formatAdminDateTime } from '../dateUtils';
 
 export default function AdminActivity({ lastSyncedAt }) {
   const [logs, setLogs] = useState([]);
@@ -111,7 +112,7 @@ export default function AdminActivity({ lastSyncedAt }) {
                 logs.map((log) => (
                   <tr key={log.id}>
                     <td className="font-mono" style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>
-                      {new Date(log.created_at).toLocaleString()}
+                      {formatAdminDateTime(log.created_at)}
                     </td>
                     <td style={{ fontWeight: 600, color: 'var(--admin-text-primary)' }}>{log.actor_admin_email}</td>
                     <td>

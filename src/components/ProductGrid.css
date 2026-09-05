@@ -26,7 +26,7 @@
 .empty-code {
   color: var(--accent-lime);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--type-caption);
   font-weight: 750;
   letter-spacing: 0.13em;
 }
@@ -34,7 +34,7 @@
 .empty-title {
   margin-top: 15px;
   color: var(--text-primary);
-  font-size: 25px;
+  font-size: 1.75rem;
   letter-spacing: -0.035em;
 }
 
@@ -42,7 +42,7 @@
   max-width: 470px;
   margin-top: 9px;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--type-body);
   line-height: 1.65;
 }
 
@@ -52,7 +52,7 @@
   padding: 0 17px;
   border-radius: 7px;
   background: var(--accent-lime);
-  color: #09100d;
-  font-size: 12px;
+  color: var(--text-inverse);
+  font-size: var(--type-small);
   font-weight: 800;
 }

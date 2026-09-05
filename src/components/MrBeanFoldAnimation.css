@@ -107,7 +107,7 @@
   justify-content: center;
   gap: 4px;
   padding: 10px 12px;
-  color: #171126;
+  color: var(--text-inverse);
 }
 
 .bean-sheet-face span,
@@ -125,7 +125,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.bean-sheet-face small { color: #696177; letter-spacing: 0; }
+.bean-sheet-face small { color: var(--text-muted); letter-spacing: 0; }
 
 .bean-sheet-fold {
   width: 50%;
@@ -161,7 +161,7 @@
   border: 3px solid #f4efff;
   border-radius: 50%;
   background: #7044d9;
-  color: #fff;
+  color: var(--text-primary);
   font: 900 7px/1 ui-monospace, monospace;
   transform: translate(-50%, -50%);
   box-shadow: 0 3px 9px rgb(55 28 112 / .3);
@@ -216,7 +216,7 @@
   border: 3px solid #fff;
   border-radius: 50%;
   background: #ff3d54;
-  color: #fff;
+  color: var(--text-primary);
   font: 950 16px/1 Arial, sans-serif;
   box-shadow: 0 6px 15px rgb(173 24 48 / .25);
   animation: bean-alert-pop 160ms cubic-bezier(.2, 1.6, .4, 1);

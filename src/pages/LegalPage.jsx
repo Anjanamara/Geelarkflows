@@ -193,7 +193,7 @@ export default function LegalPage({ type = 'terms', navigate }) {
                 <p className="legal-doc-summary">
                   How GeeLark Flows collects, processes, and protects customer emails, order records, and technical request data.
                 </p>
-                <div className="legal-meta-date">Last Updated: August 25, 2026 · Independent operator: GeeLark Flows · support@geelarkflows.com</div>
+                <div className="legal-meta-date">Last Updated: September 2, 2026 · Independent operator: GeeLark Flows · support@geelarkflows.com</div>
               </div>
 
               <div className="legal-body-content">
@@ -212,6 +212,9 @@ export default function LegalPage({ type = 'terms', navigate }) {
                     <li><strong>Custom Automation Inquiries:</strong> Name, email address, and project requirements. For abuse prevention and rate limiting, we derive and store a pseudonymous technical identifier from the connecting IP address. The application does not persist the raw IP address with the request. (Pseudonymous data is not anonymous data.)</li>
                     <li><strong>Customer Communications:</strong> Inbound emails, subjects, message content, and attachments sent to <code>support@geelarkflows.com</code>.</li>
                     <li><strong>Browser Storage:</strong> Functional browser local storage to retain cart contents and active payment screens across refreshes. No marketing or advertising cookies are used.</li>
+                    <li><strong>First-Party Storefront Analytics:</strong> We use a random anonymous browser identifier to count approximate unique visitors, page views, flow additions, and the last-known contents and server-calculated value of a browser cart. We also retain the page path, referring website host, a masked network range (not the full visitor IP address), coarse country/region/city supplied by Cloudflare, and generalized device, browser, and operating-system families. Global Privacy Control and browser Do Not Track signals disable this collection.</li>
+                    <li><strong>In-Site Notifications:</strong> The same pseudonymous browser identifier and last-known cart state may be used to select relevant messages for the notification bell, including an offer tied to a flow already in the cart. We record whether a message was delivered, read, or dismissed; we do not need an email address for this feature. Global Privacy Control and browser Do Not Track signals disable the notification feed and its targeting.</li>
+                    <li><strong>Optional Browser Push:</strong> If you explicitly press “Enable” and approve the browser permission prompt, we store a pseudonymous push-service endpoint and the public encryption material supplied by your browser so an eligible notification can reach that browser while the website is closed. We record aggregate delivery success or failure. No email is required. You can turn browser alerts off from the notification panel or revoke permission in browser settings; Global Privacy Control and Do Not Track disable enrollment.</li>
                     <li><strong>Infrastructure & Administrative Records:</strong> Cloudflare edge infrastructure handles standard network connection information necessary for security and routing. Administrative session and audit records include security identifiers, IP addresses, user-agent information, and actions performed in the administrative system for operator authentication and audit logging.</li>
                   </ul>
                 </section>
@@ -219,14 +222,14 @@ export default function LegalPage({ type = 'terms', navigate }) {
                 <section className="legal-section">
                   <h2>3. How We Use Information</h2>
                   <p>
-                    Information is used strictly for operational purposes: delivering purchased automations, verifying payment settlement, coordinating GeeLark Account Setup, responding to support inquiries, reviewing custom requests, preventing abuse, and maintaining operational, accounting, payment, and legal record-keeping. We do not sell or rent personal information to third parties for marketing or advertising.
+                    Information is used strictly for operational purposes: delivering purchased automations, verifying payment settlement, coordinating GeeLark Account Setup, responding to support inquiries, reviewing custom requests, measuring storefront and cart performance, presenting opted-in first-party in-site or browser updates and relevant cart offers, preventing abuse, and maintaining operational, accounting, payment, and legal record-keeping. We do not sell or rent personal information to third parties for marketing or advertising.
                   </p>
                 </section>
 
                 <section className="legal-section">
                   <h2>4. Third-Party Service Providers</h2>
                   <p>
-                    We rely on technical infrastructure providers: Cloudflare (hosting, Workers, D1 database, R2 storage), NOWPayments (cryptocurrency invoice processing), and Resend (transactional email delivery).
+                    We rely on technical infrastructure providers: Cloudflare (hosting, Workers, D1 database, R2 storage), NOWPayments (cryptocurrency invoice processing), Resend (transactional email delivery), and the push service operated by your browser or operating-system vendor when you opt into browser alerts.
                   </p>
                   <p>
                     Payment QR codes are generated inside your browser; payment addresses are not sent to an external QR-code service. Purchased files are delivered through private, expiring links validated by our Cloudflare Worker.
@@ -236,7 +239,7 @@ export default function LegalPage({ type = 'terms', navigate }) {
                 <section className="legal-section">
                   <h2>5. Data Retention & Inquiries</h2>
                   <p>
-                    Information is retained for as long as reasonably necessary to provide the service, maintain operational and payment records, resolve disputes, prevent fraud, satisfy legitimate business requirements, and comply with applicable legal obligations. Where information is no longer needed, it may be deleted or de-identified. For privacy inquiries, contact <code>support@geelarkflows.com</code>.
+                    Storefront analytics events, last-known cart state, in-site notification delivery state, and browser-push delivery results are kept on a rolling 90-day basis. An active browser-push subscription remains available until you unsubscribe, the browser reports that it has expired, or it is otherwise removed; revoked subscription records are deleted after 90 days. Other information is retained for as long as reasonably necessary to provide the service, maintain operational and payment records, resolve disputes, prevent fraud, satisfy legitimate business requirements, and comply with applicable legal obligations. Where information is no longer needed, it may be deleted or de-identified. For privacy inquiries, contact <code>support@geelarkflows.com</code>.
                   </p>
                 </section>
 
@@ -288,16 +291,19 @@ export default function LegalPage({ type = 'terms', navigate }) {
                 </section>
 
                 <section className="legal-section">
-                  <h2>3. Support & Correction-First Approach</h2>
+                  <h2>3. 30-Day Compatibility Support</h2>
                   <p>
-                    Where a technical issue can reasonably be diagnosed and resolved, GeeLark Flows may first provide technical support, workflow corrections, or an updated replacement package prior to issuing a refund.
+                    If the target platform (e.g. Instagram, TikTok) changes its app in a way that breaks a purchased flow's automation steps — such as changed screen layouts or element identifiers — within 30 days of delivery, GeeLark Flows will repair and redeliver the affected flow at no additional charge. This covers compatibility breakage only.
+                  </p>
+                  <p>
+                    This support window does not cover, and is not a substitute for, a refund: it does not apply to account bans, shadowbans, suspensions, or other enforcement actions taken by a third-party platform (see Section 4), misuse of the flow outside its documented purpose, or issues caused by the customer's own proxy, device, or account configuration. Beyond 30 days, or for issues outside this scope, GeeLark Flows may still provide technical support, workflow corrections, or an updated replacement package at its discretion prior to considering a refund.
                   </p>
                 </section>
 
                 <section className="legal-section">
                   <h2>4. Non-Refundable Circumstances</h2>
                   <p>
-                    Refunds are not granted for changing your mind after delivery, third-party platform changes occurring after successful delivery, account restrictions, action limits, shadowbans, suspensions, or similar actions imposed by third-party platforms, or failure to achieve particular business or revenue metrics.
+                    Refunds are not granted for changing your mind after delivery, third-party platform changes occurring after successful delivery (addressed separately under Section 3's compatibility window, not as a refund right), account restrictions, action limits, shadowbans, suspensions, or similar actions imposed by third-party platforms, or failure to achieve particular business or revenue metrics.
                   </p>
                 </section>
 

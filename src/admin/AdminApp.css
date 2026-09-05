@@ -219,6 +219,84 @@
 }
 
 /* ------------------------------------------------------------
+   VISITOR & CART ANALYTICS
+   ------------------------------------------------------------ */
+.analytics-page { display: grid; gap: 22px; }
+.analytics-page-intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+.analytics-page-intro h2 { margin: 4px 0 6px; font-size: clamp(20px, 3vw, 28px); letter-spacing: -0.04em; }
+.analytics-page-intro p { max-width: 720px; margin: 0; color: var(--admin-text-secondary); font-size: 12px; }
+.analytics-kicker { color: var(--admin-accent); font-family: var(--admin-font-mono); font-size: 9px; letter-spacing: .12em; }
+.analytics-range-control { min-width: 150px; display: grid; gap: 6px; color: var(--admin-text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+.analytics-stats-grid, .analytics-loading-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 12px; }
+.analytics-two-column { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 18px; }
+.analytics-chart-panel { min-height: 310px; }
+.analytics-bars { min-height: 245px; padding: 24px 18px 14px; display: flex; align-items: flex-end; gap: 7px; overflow-x: auto; }
+.analytics-bar-column { min-width: 24px; flex: 1 0 24px; height: 205px; display: grid; grid-template-rows: 1fr auto auto; align-items: end; gap: 4px; text-align: center; }
+.analytics-bar-track { width: 100%; height: 100%; display: flex; align-items: flex-end; border-radius: 5px; background: rgba(255,255,255,.025); overflow: hidden; }
+.analytics-bar-track span { width: 100%; min-height: 4px; display: block; border-radius: 4px 4px 1px 1px; background: linear-gradient(180deg, var(--admin-accent), rgba(167,255,79,.3)); }
+.analytics-bar-column strong { color: var(--admin-text-primary); font: 9px var(--admin-font-mono); }
+.analytics-bar-column small { color: var(--admin-text-muted); font: 8px var(--admin-font-mono); white-space: nowrap; transform: rotate(-35deg); transform-origin: center; margin-top: 6px; }
+.analytics-empty { min-height: 235px; display: grid; place-items: center; padding: 24px; color: var(--admin-text-muted); text-align: center; }
+.analytics-empty-cell { padding: 32px !important; color: var(--admin-text-muted) !important; text-align: center; }
+.analytics-product-id, .analytics-table-note { display: block; margin-top: 3px; color: var(--admin-text-muted); font: 9px var(--admin-font-mono); }
+.analytics-visitor-id { padding: 3px 6px; border: 1px solid var(--admin-border); border-radius: 4px; background: var(--admin-surface-subtle); color: var(--admin-info); font-family: var(--admin-font-mono); }
+.analytics-nowrap { white-space: nowrap; }
+.analytics-events-table { min-width: 1080px; }
+.analytics-active-carts-table { min-width: 980px; }
+.analytics-inline-warning { padding: 10px 12px; border: 1px solid rgba(255,184,79,.25); border-radius: 7px; background: var(--admin-warning-soft); color: var(--admin-warning); }
+.analytics-error-panel { padding: 34px; text-align: center; }
+.analytics-error-panel p { margin: 8px 0 0; color: var(--admin-danger); }
+
+.coupon-admin-page { display: grid; gap: 20px; }
+.coupon-create-panel { padding-bottom: 18px; }
+.coupon-panel-copy { margin: 4px 0 0; color: var(--admin-text-muted); font-size: 10.5px; }
+.coupon-form-grid { padding: 18px 20px 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.coupon-field { min-width: 0; display: grid; gap: 6px; color: var(--admin-text-secondary); font-size: 10.5px; font-weight: 600; }
+.coupon-field .admin-input, .coupon-field .admin-select { width: 100%; min-width: 0; }
+.coupon-code-token { color: var(--admin-accent); letter-spacing: .05em; }
+.coupon-table { min-width: 900px; }
+.notification-admin-page { display: grid; gap: 20px; }
+.notification-create-panel { padding-bottom: 18px; }
+.notification-form-grid { padding: 18px 20px 0; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; }
+.notification-message-field { grid-column: span 2; }
+.notification-message-field textarea { min-height: 76px; padding-top: 9px; resize: vertical; line-height: 1.45; }
+.notification-message-field small { justify-self: end; color: var(--admin-text-muted); font: 9px var(--admin-font-mono); }
+.notification-table { min-width: 1120px; }
+.notification-admin-message { max-width: 350px; margin-top: 4px; display: block; color: var(--admin-text-muted); font-size: 9.5px; line-height: 1.45; }
+.notification-push-option { grid-column: span 2; min-height: 58px; padding: 10px 12px; display: flex; align-items: flex-start; gap: 10px; border: 1px solid rgba(73,190,255,.22); border-radius: 7px; background: rgba(73,190,255,.055); cursor: pointer; }
+.notification-push-option input { margin-top: 2px; accent-color: var(--admin-accent); }
+.notification-push-option > span { display: grid; gap: 4px; }
+.notification-push-option strong { color: var(--admin-text-primary); font-size: 10.5px; }
+.notification-push-option small { color: var(--admin-text-muted); font-size: 9.5px; line-height: 1.4; }
+.notification-push-option.is-disabled { opacity: .55; cursor: not-allowed; }
+
+@media (max-width: 1100px) {
+  .coupon-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .notification-form-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+
+@media (max-width: 1100px) {
+  .analytics-stats-grid, .analytics-loading-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .analytics-two-column { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 700px) {
+  .analytics-page-intro { align-items: stretch; flex-direction: column; }
+  .analytics-range-control { width: 100%; }
+  .analytics-stats-grid, .analytics-loading-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-header { padding: 0 10px; gap: 8px; }
+  .admin-header > div:first-child { min-width: 0; gap: 8px !important; }
+  .admin-header-title { max-width: 120px; font-size: 12px; line-height: 1.15; }
+  .admin-header-actions { gap: 5px; }
+  .admin-header-actions .sync-status-indicator { display: none; }
+  .admin-header-actions .admin-select { max-width: 105px; }
+  .coupon-form-grid { grid-template-columns: 1fr; }
+  .notification-form-grid { grid-template-columns: 1fr; }
+  .notification-message-field { grid-column: auto; }
+  .notification-push-option { grid-column: auto; }
+}
+
+/* ------------------------------------------------------------
    ADMIN CONTENT & HEADER
    ------------------------------------------------------------ */
 .admin-main {
@@ -685,6 +763,10 @@
   border-radius: 10px;
   width: 100%;
   max-width: 520px;
+  max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 40px);
+  display: flex;
+  flex-direction: column;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
   overflow: hidden;
 }
@@ -716,6 +798,8 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .admin-modal-footer {

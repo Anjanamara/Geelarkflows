@@ -1,4 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import { formatAdminDateTime, formatAdminTime } from '../dateUtils';
+import { redirectIfUnauthorized } from '../apiUtils';
+import { formatStatusLabel } from '../formatUtils';
 
 export default function AdminOrderDetail({ orderId, navigate, user, onActionSuccess }) {
   const [data, setData] = useState(null);
@@ -19,6 +22,7 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
 
   // Live Gateway Sync
   const [syncingGateway, setSyncingGateway] = useState(false);
+  const [gatewayNotice, setGatewayNotice] = useState(null);
 
   const fetchOrderDetail = async () => {
     setLoading(true);
@@ -59,6 +63,7 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
         }),
       });
 
+      if (redirectIfUnauthorized(res)) return;
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || 'Transition failed.');
 
@@ -93,6 +98,7 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
         }),
       });
 
+      if (redirectIfUnauthorized(res)) return;
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || 'Verification failed.');
 
@@ -108,6 +114,7 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
 
   const handleSyncGateway = async () => {
     setSyncingGateway(true);
+    setGatewayNotice(null);
     try {
       const payId = data?.payment?.id || orderId;
       const res = await fetch(`/api/admin/payments/${payId}/sync`, {
@@ -118,13 +125,20 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
         },
       });
 
+      if (redirectIfUnauthorized(res)) return;
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || 'Gateway sync failed.');
 
+      setGatewayNotice({
+        type: 'success',
+        text: json.orderReconciled
+          ? `Gateway status ${json.status}; order reconciled from ${json.previousOrderStatus} to ${json.orderStatus}.`
+          : `Gateway status ${json.status}; order state already consistent.`,
+      });
       fetchOrderDetail();
       if (onActionSuccess) onActionSuccess();
     } catch (err) {
-      alert(`Gateway sync notice: ${err.message}`);
+      setGatewayNotice({ type: 'error', text: err.message });
     } finally {
       setSyncingGateway(false);
     }
@@ -144,6 +158,7 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
         }),
       });
 
+      if (redirectIfUnauthorized(res)) return;
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || 'Failed to update fulfillment status.');
 
@@ -170,6 +185,7 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
         }),
       });
 
+      if (redirectIfUnauthorized(res)) return;
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || 'Fulfillment dispatch failed.');
 
@@ -206,7 +222,7 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
   // Allowed transitions
   const ALLOWED_ORDER_TRANSITIONS = {
     pending: ['awaiting_payment', 'cancelled'],
-    awaiting_payment: ['paid', 'failed', 'cancelled'],
+    awaiting_payment: ['cancelled'],
     paid: ['processing', 'refunded'],
     processing: ['completed', 'refunded'],
     completed: ['refunded'],
@@ -215,6 +231,16 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
     failed: [],
   };
   const nextAllowed = ALLOWED_ORDER_TRANSITIONS[order.status] || [];
+
+  const confirmedPaymentStatuses = ['confirmed', 'finished', 'paid'];
+  const activePaymentStatuses = ['waiting', 'confirming', 'sending', 'partially_paid'];
+  const settledOrderStatuses = ['paid', 'processing', 'completed'];
+  const paymentStatus = String(payment?.status || '').toLowerCase();
+  const isPaymentConfirmed = confirmedPaymentStatuses.includes(paymentStatus);
+  const isOrderSettled = settledOrderStatuses.includes(order.status);
+  const canFulfill = isOrderSettled && isPaymentConfirmed;
+  const failedWithActiveInvoice = order.status === 'failed' && activePaymentStatuses.includes(paymentStatus);
+  const settledWithoutConfirmedPayment = isOrderSettled && !isPaymentConfirmed;
 
   // Fulfillment transition options based on delivery method
   const isSetup = order.delivery_method === 'geelark_setup';
@@ -229,6 +255,22 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
         { id: 'package_preparing', label: 'Package Preparing' },
         { id: 'package_delivered', label: 'Package Delivered' },
       ];
+  const fulfillmentTransitions = isSetup
+    ? {
+        not_ready: ['setup_pending'],
+        setup_pending: ['setup_in_progress', 'failed'],
+        setup_in_progress: ['setup_completed', 'failed'],
+        setup_completed: [],
+        failed: [],
+      }
+    : {
+        not_ready: ['fulfillment_pending'],
+        fulfillment_pending: ['package_preparing', 'failed'],
+        package_preparing: ['package_delivered', 'failed'],
+        package_delivered: [],
+        failed: [],
+      };
+  const allowedFulfillmentTargets = fulfillmentTransitions[order.fulfillment_status || 'not_ready'] || [];
 
   return (
     <div>
@@ -258,7 +300,7 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
               {syncingGateway ? 'Syncing...' : '🔄 Sync Gateway'}
             </button>
           )}
-          {user?.role === 'SUPER_ADMIN' && order.status !== 'paid' && order.status !== 'completed' && (
+          {user?.role === 'SUPER_ADMIN' && !isPaymentConfirmed && (
             <button
               type="button"
               className="btn-admin-primary"
@@ -274,6 +316,21 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
       {resendNotice && (
         <div className={`attention-banner ${resendNotice.type === 'success' ? 'warning' : 'danger'}`} style={{ marginBottom: '16px' }}>
           {resendNotice.text}
+        </div>
+      )}
+      {gatewayNotice && (
+        <div className={`attention-banner ${gatewayNotice.type === 'success' ? 'warning' : 'danger'}`} style={{ marginBottom: '16px' }}>
+          {gatewayNotice.text}
+        </div>
+      )}
+      {failedWithActiveInvoice && (
+        <div className="attention-banner warning" style={{ marginBottom: '16px' }}>
+          <strong>Status mismatch:</strong> this order is marked failed, but NOWPayments still reports an active <span className="font-mono">{paymentStatus}</span> invoice. Use <strong>Sync Gateway</strong> to restore the order to awaiting payment. Fulfillment remains locked.
+        </div>
+      )}
+      {settledWithoutConfirmedPayment && (
+        <div className="attention-banner danger" style={{ marginBottom: '16px' }}>
+          <strong>Critical mismatch:</strong> the order is marked {order.status}, but the payment record is <span className="font-mono">{paymentStatus || 'missing'}</span>. Verify with NOWPayments before fulfillment.
         </div>
       )}
 
@@ -336,9 +393,17 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
                       : 'Included ($0.00)'}
                   </span>
                 </div>
+                {order.coupon_code && Number(order.coupon_discount_usd || 0) > 0 && (
+                  <div>
+                    <span className="stat-label" style={{ display: 'block', marginBottom: '2px' }}>Coupon ({order.coupon_code})</span>
+                    <span className="font-mono" style={{ fontSize: '12.5px', color: 'var(--admin-accent)' }}>
+                      −${Number(order.coupon_discount_usd).toFixed(2)} USD
+                    </span>
+                  </div>
+                )}
                 <div>
-                  <span className="stat-label" style={{ display: 'block', marginBottom: '2px' }}>Total Amount Paid</span>
-                  <span className="font-mono" style={{ fontSize: '13px', fontWeight: 700, color: 'var(--admin-accent)' }}>
+                  <span className="stat-label" style={{ display: 'block', marginBottom: '2px' }}>{isPaymentConfirmed ? 'Total Paid' : 'Invoice Total (Unpaid)'}</span>
+                  <span className="font-mono" style={{ fontSize: '13px', fontWeight: 700, color: isPaymentConfirmed ? 'var(--admin-accent)' : 'var(--admin-text-primary)' }}>
                     ${Number(order.total_usd || 0).toFixed(2)} USD
                   </span>
                 </div>
@@ -369,14 +434,14 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
                       <span className="network-badge">{payment.currency}</span>
                     </div>
                     <div>
-                      <span className="stat-label" style={{ marginBottom: '4px', display: 'block' }}>Crypto Amount</span>
-                      <span className="font-mono" style={{ fontWeight: 700, color: 'var(--admin-accent)' }}>
+                      <span className="stat-label" style={{ marginBottom: '4px', display: 'block' }}>{isPaymentConfirmed ? 'Crypto Amount Paid' : 'Crypto Amount Requested'}</span>
+                      <span className="font-mono" style={{ fontWeight: 700, color: isPaymentConfirmed ? 'var(--admin-accent)' : 'var(--admin-text-primary)' }}>
                         {payment.pay_amount_crypto} USDT
                       </span>
                     </div>
                     <div>
                       <span className="stat-label" style={{ marginBottom: '4px', display: 'block' }}>Payment Status</span>
-                      <span className={`status-badge ${payment.status}`}>{payment.status}</span>
+                      <span className={`status-badge ${payment.status}`}>{formatStatusLabel(payment.status)}</span>
                     </div>
                   </div>
 
@@ -419,7 +484,7 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
                 {isSetup ? 'GeeLark Account Setup Fulfillment' : 'Digital Package Fulfillment'}
               </strong>
               <span className={`status-badge ${order.fulfillment_status || 'not_ready'}`}>
-                {order.fulfillment_status || 'not_ready'}
+                {formatStatusLabel(order.fulfillment_status || 'not_ready')}
               </span>
             </div>
             <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -430,7 +495,7 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
                   </span>
                   <span className="font-mono" style={{ color: 'var(--admin-text-primary)' }}>{order.customer_email}</span>
                 </div>
-                {!isSetup && ['paid', 'processing', 'completed'].includes(order.status) && (
+                {!isSetup && canFulfill && (
                   <button
                     type="button"
                     className="btn-admin-secondary"
@@ -447,16 +512,22 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
                 <span className="stat-label" style={{ display: 'block', marginBottom: '8px' }}>
                   Update Fulfillment Lifecycle State:
                 </span>
+                {!canFulfill && (
+                  <p style={{ marginBottom: '10px', color: 'var(--admin-danger)', fontSize: '11.5px' }}>
+                    Locked until both records confirm settlement. Order: <strong className="font-mono">{order.status}</strong>; payment: <strong className="font-mono">{paymentStatus || 'missing'}</strong>.
+                  </p>
+                )}
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   {fulfillmentStages.map((stage) => {
                     const isCurrent = order.fulfillment_status === stage.id;
+                    const isAllowedNext = allowedFulfillmentTargets.includes(stage.id);
                     return (
                       <button
                         key={stage.id}
                         type="button"
                         className={isCurrent ? 'btn-admin-primary' : 'btn-admin-secondary'}
                         style={{ height: '30px', fontSize: '11.5px' }}
-                        disabled={isCurrent}
+                        disabled={isCurrent || !canFulfill || !isAllowedNext}
                         onClick={() => handleUpdateFulfillmentStatus(stage.id)}
                       >
                         {isCurrent ? `✓ ${stage.label}` : `Set ${stage.label}`}
@@ -468,7 +539,7 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
 
               {order.delivered_at && (
                 <div style={{ fontSize: '11.5px', color: 'var(--admin-text-muted)', fontFamily: 'var(--admin-font-mono)' }}>
-                  Completed at: {new Date(order.delivered_at).toLocaleString()}
+                  Completed at: {formatAdminDateTime(order.delivered_at)}
                 </div>
               )}
 
@@ -478,7 +549,7 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
                   <span className="stat-label" style={{ display: 'block', marginBottom: '6px' }}>Delivery History</span>
                   {fulfillmentLogs.map((log) => (
                     <div key={log.id} style={{ fontSize: '11.5px', display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
-                      <span className="font-mono">{new Date(log.created_at).toLocaleTimeString()} ({log.triggered_by})</span>
+                      <span className="font-mono">{formatAdminTime(log.created_at)} ({log.triggered_by})</span>
                       <span className={`status-badge ${log.status}`}>{log.status}</span>
                     </div>
                   ))}
@@ -499,7 +570,9 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
 
             {nextAllowed.length === 0 ? (
               <p style={{ fontSize: '11.5px', color: 'var(--admin-text-muted)' }}>
-                This order is in a terminal state ({order.status}). No further transitions allowed.
+                {failedWithActiveInvoice
+                  ? 'Manual transitions are locked because the live invoice is active. Use Sync Gateway to reconcile this order.'
+                  : `This order is in a terminal state (${order.status}). No further manual transitions are allowed.`}
               </p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -526,22 +599,26 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
               <div className="timeline-step done">
                 <span className="timeline-dot" />
                 <span className="timeline-title">Order Created</span>
-                <span className="timeline-time">{new Date(order.created_at).toLocaleString()}</span>
+                <span className="timeline-time">{formatAdminDateTime(order.created_at)}</span>
               </div>
 
               {payment && (
-                <div className={`timeline-step ${payment.status !== 'waiting' ? 'done' : ''}`}>
+                <div className="timeline-step done">
                   <span className="timeline-dot" />
                   <span className="timeline-title">Crypto Invoice Created ({payment.currency})</span>
-                  <span className="timeline-time">{new Date(payment.created_at).toLocaleString()}</span>
+                  <span className="timeline-time">{formatAdminDateTime(payment.created_at)}</span>
                 </div>
               )}
 
-              <div className={`timeline-step ${['paid', 'processing', 'completed'].includes(order.status) ? 'done' : ''}`}>
+              <div className={`timeline-step ${isPaymentConfirmed ? 'done' : ''}`}>
                 <span className="timeline-dot" />
                 <span className="timeline-title">Payment Confirmed</span>
                 <span className="timeline-time">
-                  {['paid', 'processing', 'completed'].includes(order.status) ? 'Settled on blockchain' : 'Awaiting confirmation'}
+                  {isPaymentConfirmed
+                    ? 'Settled on blockchain'
+                    : order.status === 'failed'
+                      ? `Not confirmed — order failed (${paymentStatus || 'no payment status'})`
+                      : `Awaiting confirmation (${paymentStatus || 'no payment status'})`}
                 </span>
               </div>
 
@@ -549,7 +626,7 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
                 <span className="timeline-dot" />
                 <span className="timeline-title">Secure Fulfillment Dispatched</span>
                 <span className="timeline-time">
-                  {order.delivered_at ? new Date(order.delivered_at).toLocaleString() : 'Pending delivery'}
+                  {formatAdminDateTime(order.delivered_at, 'Pending delivery')}
                 </span>
               </div>
             </div>
@@ -564,7 +641,7 @@ export default function AdminOrderDetail({ orderId, navigate, user, onActionSucc
                   <div key={aud.id} style={{ borderBottom: '1px solid var(--admin-border)', paddingBottom: '8px', fontSize: '11.5px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--admin-text-secondary)' }}>
                       <strong>{aud.action}</strong>
-                      <span className="font-mono">{new Date(aud.created_at).toLocaleTimeString()}</span>
+                      <span className="font-mono">{formatAdminTime(aud.created_at)}</span>
                     </div>
                     <div style={{ color: 'var(--admin-text-muted)', marginTop: '2px' }}>
                       By: {aud.actor_admin_email} | {aud.previous_state} → {aud.new_state}

@@ -1,10 +1,47 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useCart } from '../context/CartContext';
 import { USDT_NETWORKS, USDT_NETWORKS_LIST, getNetworkConfig, DEFAULT_NETWORK_ID } from '../data/paymentConfig';
+import {
+  ACTIVE_PAYMENT_STORAGE_KEY,
+  PENDING_COUPON_STORAGE_KEY,
+  isClosedPaymentStatus,
+  normalizeCouponCode,
+  paymentStageFromStatus,
+} from '../checkoutIntent';
 import CheckoutProgress from '../components/CheckoutProgress';
 import './CheckoutPage.css';
 
-const ACTIVE_PAYMENT_STORAGE_KEY = 'geelark_active_payment';
+function readPendingCoupon() {
+  try {
+    const queryCode = new URLSearchParams(window.location.search).get('coupon');
+    const code = normalizeCouponCode(queryCode || localStorage.getItem(PENDING_COUPON_STORAGE_KEY));
+    if (code) localStorage.setItem(PENDING_COUPON_STORAGE_KEY, code);
+    return code;
+  } catch {
+    return '';
+  }
+}
+
+function clearCouponQuery() {
+  try {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('coupon')) return;
+    url.searchParams.delete('coupon');
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  } catch {
+    // The coupon remains safely stored even if the address bar cannot be updated.
+  }
+}
+
+async function generateLocalQrCode(payAddress) {
+  if (!payAddress) return null;
+  const { toDataURL } = await import('qrcode');
+  return toDataURL(payAddress, {
+    width: 320,
+    margin: 1,
+    errorCorrectionLevel: 'M',
+  });
+}
 
 export default function CheckoutPage({ navigate }) {
   const { cart, clearCart, cartTotal, cartItemCount } = useCart();
@@ -12,6 +49,7 @@ export default function CheckoutPage({ navigate }) {
   // Explicit Checkout Sub-Stages: 'form' | 'awaiting_payment' | 'verifying' | 'completed'
   const [stage, setStage] = useState('form');
   const [activeOrder, setActiveOrder] = useState(null);
+  const [resumeCandidate, setResumeCandidate] = useState(null);
 
   // Form Fields
   const [customerEmail, setCustomerEmail] = useState('');
@@ -21,9 +59,16 @@ export default function CheckoutPage({ navigate }) {
   // Status & UI
   const [checkingOut, setCheckingOut] = useState(false);
   const [checkoutError, setCheckoutError] = useState(null);
+  const [initialCoupon] = useState(readPendingCoupon);
+  const [couponInput, setCouponInput] = useState(initialCoupon);
+  const [appliedCoupon, setAppliedCoupon] = useState(null);
+  const [couponStatus, setCouponStatus] = useState({ type: 'idle', message: '' });
+  const [validatingCoupon, setValidatingCoupon] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [qrImageFailed, setQrImageFailed] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const pollingTimerRef = useRef(null);
+  const pendingCouponApplyRef = useRef(false);
 
   // Pricing Engine (Authoritative mirror of backend logic)
   const workflowSubtotal = useMemo(() => {
@@ -36,8 +81,8 @@ export default function CheckoutPage({ navigate }) {
   }, [deliveryMethod, workflowSubtotal]);
 
   const calculatedFinalTotal = useMemo(() => {
-    return workflowSubtotal + setupFee;
-  }, [workflowSubtotal, setupFee]);
+    return Math.max(0, workflowSubtotal + setupFee - Number(appliedCoupon?.couponDiscount || 0));
+  }, [workflowSubtotal, setupFee, appliedCoupon]);
 
   const activeNetworkConfig = useMemo(() => {
     return getNetworkConfig(selectedNetwork) || USDT_NETWORKS[DEFAULT_NETWORK_ID];
@@ -50,20 +95,43 @@ export default function CheckoutPage({ navigate }) {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (parsed && (parsed.orderId || parsed.paymentId)) {
-          setActiveOrder(parsed);
-          if (['confirmed', 'finished', 'paid'].includes((parsed.status || '').toLowerCase())) {
-            setStage('completed');
-          } else if (parsed.status === 'verifying') {
-            setStage('verifying');
+          if (isClosedPaymentStatus(parsed.status)) {
+            localStorage.removeItem(ACTIVE_PAYMENT_STORAGE_KEY);
+            setCheckoutError('Your previous invoice is closed. Review the current cart to create a new payment.');
+          } else if (initialCoupon) {
+            // A coupon requests a new total. Never replace the current cart with
+            // an older invoice without letting the buyer choose what to do.
+            setResumeCandidate(parsed);
           } else {
-            setStage('awaiting_payment');
+            setActiveOrder(parsed);
+            setStage(paymentStageFromStatus(parsed.status));
           }
         }
       }
     } catch (e) {
       console.error('Failed to parse active payment from localStorage', e);
     }
-  }, []);
+  }, [initialCoupon]);
+
+  // Older sessions may contain an external or missing QR URL. Regenerate it
+  // locally so the wallet address is never sent to a third-party QR service.
+  useEffect(() => {
+    if (!activeOrder?.payAddress || String(activeOrder.qrCodeUrl || '').startsWith('data:image/')) return;
+    let cancelled = false;
+    generateLocalQrCode(activeOrder.payAddress).then((qrCodeUrl) => {
+      if (cancelled || !qrCodeUrl) return;
+      setQrImageFailed(false);
+      setActiveOrder((current) => {
+        if (!current || current.payAddress !== activeOrder.payAddress) return current;
+        const updated = { ...current, qrCodeUrl };
+        try { localStorage.setItem(ACTIVE_PAYMENT_STORAGE_KEY, JSON.stringify(updated)); } catch {}
+        return updated;
+      });
+    }).catch(() => setQrImageFailed(true));
+    return () => { cancelled = true; };
+  }, [activeOrder?.payAddress, activeOrder?.qrCodeUrl]);
+
+  useEffect(() => setQrImageFailed(false), [activeOrder?.orderId]);
 
   // Backend Status Polling: Queries GET /api/checkout/status/:id
   const checkBackendPaymentStatus = useCallback(async (order) => {
@@ -80,7 +148,7 @@ export default function CheckoutPage({ navigate }) {
 
       const resData = await response.json();
       if (resData.success && resData.data) {
-        const { isConfirmed, status, txHash, fullNetworkLabel, currency, deliveryMethod: backendDelivery, workflowSubtotal: backendSubtotal, setupFee: backendSetup, totalUsd: backendTotal, fulfillmentStatus } = resData.data;
+        const { isConfirmed, status, txHash, fullNetworkLabel, currency, deliveryMethod: backendDelivery, workflowSubtotal: backendSubtotal, setupFee: backendSetup, couponCode: backendCouponCode, couponDiscount: backendCouponDiscount, totalUsd: backendTotal, fulfillmentStatus } = resData.data;
 
         if (isConfirmed || ['confirmed', 'finished', 'paid'].includes((status || '').toLowerCase())) {
           const confirmedOrder = {
@@ -89,9 +157,11 @@ export default function CheckoutPage({ navigate }) {
             txHash: txHash || order.txHash || null,
             fullNetworkLabel: fullNetworkLabel || order.fullNetworkLabel || currency || order.currency,
             deliveryMethod: backendDelivery || order.deliveryMethod || 'download_package',
-            workflowSubtotal: backendSubtotal || order.workflowSubtotal || order.totalUsd,
+            workflowSubtotal: backendSubtotal ?? order.workflowSubtotal ?? order.totalUsd,
             setupFee: backendSetup ?? order.setupFee ?? 0,
-            totalUsd: backendTotal || order.totalUsd,
+            couponCode: backendCouponCode ?? order.couponCode ?? null,
+            couponDiscount: backendCouponDiscount ?? order.couponDiscount ?? 0,
+            totalUsd: backendTotal ?? order.totalUsd,
             fulfillmentStatus: fulfillmentStatus || order.fulfillmentStatus || 'fulfillment_pending',
           };
           setActiveOrder(confirmedOrder);
@@ -99,6 +169,11 @@ export default function CheckoutPage({ navigate }) {
             localStorage.setItem(ACTIVE_PAYMENT_STORAGE_KEY, JSON.stringify(confirmedOrder));
           } catch (e) {}
           setStage('completed');
+        } else if (isClosedPaymentStatus(status)) {
+          try { localStorage.removeItem(ACTIVE_PAYMENT_STORAGE_KEY); } catch {}
+          setActiveOrder(null);
+          setStage('form');
+          setCheckoutError(`Your previous invoice is ${String(status).toLowerCase()}. Review the current cart to create a new payment.`);
         }
       }
     } catch (err) {
@@ -154,12 +229,100 @@ export default function CheckoutPage({ navigate }) {
     }
   };
 
+  const handleBrowseFlows = () => {
+    if (typeof navigate === 'function') {
+      navigate('/');
+    } else {
+      window.history.pushState({}, '', '/');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+    setTimeout(() => document.getElementById('catalog')?.scrollIntoView({ behavior: 'smooth' }), 100);
+  };
+
+  const handleStartCouponCheckout = () => {
+    try { localStorage.removeItem(ACTIVE_PAYMENT_STORAGE_KEY); } catch {}
+    setResumeCandidate(null);
+    setActiveOrder(null);
+    setStage('form');
+    setCheckoutError(null);
+  };
+
+  const handleResumePreviousPayment = () => {
+    if (!resumeCandidate) return;
+    setActiveOrder(resumeCandidate);
+    setResumeCandidate(null);
+    setStage(paymentStageFromStatus(resumeCandidate.status));
+    clearCouponQuery();
+  };
+
   const copyToClipboard = (text) => {
     if (!text) return;
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  const handleApplyCoupon = async () => {
+    const code = couponInput.trim().toUpperCase();
+    if (!code) {
+      setCouponStatus({ type: 'error', message: 'Enter a coupon code first.' });
+      return;
+    }
+
+    setValidatingCoupon(true);
+    setCouponStatus({ type: 'idle', message: '' });
+
+    try {
+      const response = await fetch('/api/coupons/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          coupon_code: code,
+          delivery_method: deliveryMethod,
+          cart: cart.map((item) => ({
+            id: item.id,
+            title: item.title,
+            price: item.price,
+            quantity: item.quantity || 1,
+            platform: item.platform || 'geelark',
+          })),
+        }),
+      });
+      const resData = await response.json();
+      if (!response.ok || !resData.success || !resData.data) {
+        throw new Error(resData.error || 'This coupon could not be applied.');
+      }
+
+      setCouponInput(resData.data.code);
+      setAppliedCoupon(resData.data);
+      setCouponStatus({
+        type: 'success',
+        message: `${resData.data.code} applied — you save $${Number(resData.data.couponDiscount).toFixed(2)}.`,
+      });
+      try { localStorage.removeItem(PENDING_COUPON_STORAGE_KEY); } catch {}
+      clearCouponQuery();
+      setCheckoutError(null);
+    } catch (err) {
+      setAppliedCoupon(null);
+      setCouponStatus({ type: 'error', message: err.message || 'This coupon could not be applied.' });
+    } finally {
+      setValidatingCoupon(false);
+    }
+  };
+
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponInput('');
+    setCouponStatus({ type: 'idle', message: '' });
+    try { localStorage.removeItem(PENDING_COUPON_STORAGE_KEY); } catch {}
+    clearCouponQuery();
+  };
+
+  useEffect(() => {
+    if (!initialCoupon || cart.length === 0 || stage !== 'form' || resumeCandidate || pendingCouponApplyRef.current) return;
+    pendingCouponApplyRef.current = true;
+    handleApplyCoupon();
+  }, [initialCoupon, cart.length, stage, resumeCandidate]);
 
   // Authorize Payment Submission
   const handleAuthorizePayment = async (e) => {
@@ -196,20 +359,20 @@ export default function CheckoutPage({ navigate }) {
           network: selectedNetwork,
           payment_network: selectedNetwork,
           delivery_method: deliveryMethod,
+          coupon_code: appliedCoupon?.code || undefined,
           cart: cartSnapshot,
         }),
       });
 
       const resData = await response.json();
+      if (resData.success && resData.data && !Number.isFinite(resData.data.totalUsd)) {
+        setCheckoutError('Payment gateway returned an incomplete invoice. Please try again.');
+        return;
+      }
       if (resData.success && resData.data) {
         let qrCodeUrl = null;
         try {
-          const { toDataURL } = await import('qrcode');
-          qrCodeUrl = await toDataURL(resData.data.payAddress, {
-            width: 220,
-            margin: 1,
-            errorCorrectionLevel: 'M',
-          });
+          qrCodeUrl = await generateLocalQrCode(resData.data.payAddress);
         } catch (qrErr) {
           console.warn('Local QR generation failed', qrErr.message);
         }
@@ -230,9 +393,12 @@ export default function CheckoutPage({ navigate }) {
           payCurrencyTicker: resData.data.payCurrencyTicker,
           qrCodeUrl,
           deliveryMethod: resData.data.deliveryMethod || deliveryMethod,
-          workflowSubtotal: resData.data.workflowSubtotal || workflowSubtotal,
+          workflowSubtotal: resData.data.workflowSubtotal ?? workflowSubtotal,
           setupFee: resData.data.setupFee ?? setupFee,
-          totalUsd: resData.data.totalUsd || calculatedFinalTotal,
+          couponCode: resData.data.couponCode ?? appliedCoupon?.code ?? null,
+          couponDiscount: resData.data.couponDiscount ?? appliedCoupon?.couponDiscount ?? 0,
+          couponLabel: resData.data.couponLabel ?? appliedCoupon?.discountLabel ?? null,
+          totalUsd: resData.data.totalUsd,
           email: customerEmail,
           items: cartSnapshot,
           status: 'awaiting_payment',
@@ -359,21 +525,44 @@ export default function CheckoutPage({ navigate }) {
         />
 
         <div className="checkout-page-container">
+          {stage === 'form' && resumeCandidate && (
+            <section className="checkout-session-choice" aria-labelledby="checkout-session-choice-title">
+              <span className="session-choice-kicker">Coupon {initialCoupon} is ready</span>
+              <h1 id="checkout-session-choice-title">Choose the total you want to continue with.</h1>
+              <p>
+                A previous invoice is still saved in this browser. Its amount is fixed and cannot be changed by a coupon.
+                Start a new checkout to price your current cart and apply <strong className="font-mono">{initialCoupon}</strong>,
+                or resume the older invoice exactly as issued.
+              </p>
+              <div className="session-choice-totals" aria-label="Checkout totals comparison">
+                <div><span>Current cart</span><strong className="font-mono">${Number(cartTotal).toFixed(2)}</strong></div>
+                <div><span>Previous invoice</span><strong className="font-mono">${Number(resumeCandidate.totalUsd || 0).toFixed(2)}</strong></div>
+              </div>
+              <div className="session-choice-actions">
+                <button type="button" className="btn-start-coupon-checkout" onClick={handleStartCouponCheckout}>Start new checkout with coupon</button>
+                <button type="button" className="btn-resume-payment" onClick={handleResumePreviousPayment}>Resume previous invoice</button>
+              </div>
+              <small>Starting again removes the old invoice from this browser. Do not send payment to both invoices.</small>
+            </section>
+          )}
+
           {/* ======================================================== */}
           {/* 1. CHECKOUT FORM STAGE (Contact, Delivery, Payment Network) */}
           {/* ======================================================== */}
-          {stage === 'form' && (
+          {stage === 'form' && !resumeCandidate && (
             isFormEmpty ? (
               <div className="empty-checkout-card">
+                {initialCoupon && <span className="empty-coupon-ready font-mono">Coupon {initialCoupon} saved</span>}
                 <h1 className="empty-title">Your cart is empty</h1>
-                <p className="empty-sub">Add workflows to your cart before proceeding to checkout.</p>
+                <p className="empty-sub">{initialCoupon ? 'Add workflows to your cart and the coupon will be applied when you return to checkout.' : 'Add workflows to your cart before proceeding to checkout.'}</p>
                 <button
                   type="button"
                   className="btn-return-cart"
-                  onClick={handleReturnToCart}
+                  onClick={initialCoupon ? handleBrowseFlows : handleReturnToCart}
                 >
-                  Go to Cart →
+                  {initialCoupon ? 'Browse workflows →' : 'Go to Cart →'}
                 </button>
+                {checkoutError && <div className="checkout-error-banner" role="alert">{checkoutError}</div>}
               </div>
             ) : (
               <>
@@ -535,6 +724,51 @@ export default function CheckoutPage({ navigate }) {
                       ))}
                     </div>
 
+                    <div className="coupon-entry">
+                      <label className="coupon-label" htmlFor="checkout-coupon">Coupon code</label>
+                      <div className="coupon-input-row">
+                        <input
+                          id="checkout-coupon"
+                          className="coupon-code-input font-mono"
+                          type="text"
+                          value={couponInput}
+                          onChange={(event) => {
+                            setCouponInput(event.target.value.toUpperCase());
+                            if (appliedCoupon && event.target.value.toUpperCase() !== appliedCoupon.code) {
+                              setAppliedCoupon(null);
+                              setCouponStatus({ type: 'idle', message: '' });
+                            }
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              handleApplyCoupon();
+                            }
+                          }}
+                          placeholder="Enter code"
+                          maxLength={32}
+                          autoComplete="off"
+                          disabled={validatingCoupon}
+                        />
+                        <button
+                          type="button"
+                          className="btn-apply-coupon"
+                          onClick={handleApplyCoupon}
+                          disabled={validatingCoupon || !couponInput.trim()}
+                        >
+                          {validatingCoupon ? 'Checking…' : appliedCoupon ? 'Reapply' : 'Apply'}
+                        </button>
+                      </div>
+                      {couponStatus.message && (
+                        <div className={`coupon-feedback ${couponStatus.type}`} role={couponStatus.type === 'error' ? 'alert' : 'status'}>
+                          <span>{couponStatus.message}</span>
+                          {appliedCoupon && (
+                            <button type="button" className="coupon-remove" onClick={handleRemoveCoupon}>Remove</button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
                     {/* Pricing Breakdown */}
                     <div className="summary-breakdown-table">
                       <div className="breakdown-row">
@@ -552,6 +786,13 @@ export default function CheckoutPage({ navigate }) {
                             : 'Included ($0.00)'}
                         </span>
                       </div>
+
+                      {appliedCoupon && (
+                        <div className="breakdown-row coupon-discount-row">
+                          <span className="k">Coupon ({appliedCoupon.code})</span>
+                          <span className="v font-mono">−${Number(appliedCoupon.couponDiscount).toFixed(2)}</span>
+                        </div>
+                      )}
 
                       <div className="breakdown-row total-highlight-row">
                         <span className="total-k">Total amount due</span>
@@ -629,13 +870,21 @@ export default function CheckoutPage({ navigate }) {
 
                 <div className="payment-panel-content">
                   {/* QR Code */}
-                  {activeOrder.qrCodeUrl && (
+                  {activeOrder.payAddress && (
                     <div className="qr-container">
-                      <img
-                        src={activeOrder.qrCodeUrl}
-                        alt={`${activeOrder.currency} Payment QR Code`}
-                        className="qr-img"
-                      />
+                      {activeOrder.qrCodeUrl && !qrImageFailed ? (
+                        <img
+                          src={activeOrder.qrCodeUrl}
+                          alt={`${activeOrder.currency} payment QR code`}
+                          className="qr-img"
+                          onError={() => setQrImageFailed(true)}
+                        />
+                      ) : (
+                        <div className="qr-fallback" role="status">
+                          <strong>QR unavailable</strong>
+                          <span>Copy the verified wallet address below.</span>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -882,6 +1131,12 @@ export default function CheckoutPage({ navigate }) {
                           : 'Included'}
                       </span>
                     </div>
+                    {activeOrder.couponCode && Number(activeOrder.couponDiscount || 0) > 0 && (
+                      <div className="receipt-row coupon-discount-row">
+                        <span className="rk">Coupon ({activeOrder.couponCode})</span>
+                        <span className="rv font-mono">−${Number(activeOrder.couponDiscount).toFixed(2)} USD</span>
+                      </div>
+                    )}
                     <div className="receipt-row total-paid-row">
                       <span className="rk-bold">Amount paid</span>
                       <span className="rv-bold font-mono">
@@ -936,6 +1191,24 @@ export default function CheckoutPage({ navigate }) {
           )}
         </div>
       </main>
+
+      {/* Mobile Fixed Bottom Action Bar */}
+      {stage === 'form' && cart.length > 0 && (
+        <div className="checkout-mobile-bar">
+          <div className="mobile-bar-info">
+            <span className="mobile-bar-label">Total amount due</span>
+            <span className="mobile-bar-val font-mono">${calculatedFinalTotal.toFixed(2)} USD</span>
+          </div>
+          <button
+            type="button"
+            className="mobile-btn-checkout"
+            disabled={checkingOut || cart.length === 0}
+            onClick={handleAuthorizePayment}
+          >
+            {checkingOut ? 'Generating invoice...' : 'Continue to Payment →'}
+          </button>
+        </div>
+      )}
 
       {/* Leave Payment Confirmation Modal */}
       {showLeaveConfirm && (

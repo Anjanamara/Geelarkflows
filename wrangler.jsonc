@@ -2,6 +2,17 @@
 	"name": "geelarkflows",
 	"main": "src/worker.js",
 	"compatibility_date": "2026-05-25",
+	"compatibility_flags": ["nodejs_compat"],
+	"routes": [
+		{
+			"pattern": "geelarkflows.com",
+			"custom_domain": true
+		},
+		{
+			"pattern": "www.geelarkflows.com",
+			"custom_domain": true
+		}
+	],
 	"vars": {
 		"SITE_URL": "https://geelarkflows.com",
 		"ADMIN_BOOTSTRAP_ENABLED": "false"
@@ -12,7 +23,8 @@
 	"assets": {
 		"binding": "ASSETS",
 		"directory": "./dist",
-		"not_found_handling": "single-page-application"
+		"not_found_handling": "none",
+		"run_worker_first": ["/*", "!/assets/*"]
 	},
 	"d1_databases": [
 		{

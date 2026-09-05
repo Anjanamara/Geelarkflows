@@ -1,7 +1,7 @@
 # GeeLark Flows — Privacy & Data Processing Map
 
 > **Document Version**: 1.2.0 (Security-Hardened Baseline)
-> **Last Updated**: 2026-08-25
+> **Last Updated**: 2026-09-02
 > **Applicability**: Public Storefront, Checkout Engine, Custom Requests, Inbound/Outbound Email, and Admin Operations.
 
 ---
@@ -66,30 +66,51 @@ This document maps all personal and operational data processed by GeeLark Flows 
 | Data Field | Purpose | Source | Storage System | External Processor | Retention Status | Customer Disclosure | Owner Decision Needed |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Admin Identity** (`email`, `name`, `role`) | Operator authentication & RBAC | Seeded/provisioned by owner | Cloudflare D1 (`admin_users`) | None | Retained until admin removal | Internal | None. |
-| **Password Verifier** (`password_hash`) | Admin authentication | PBKDF2-SHA256 (600k iterations, random salt; older hashes upgrade after successful login) | Cloudflare D1 (`admin_users`) | None | Retained with user | Internal | None. |
+| **Password Verifier** (`password_hash`) | Admin authentication | PBKDF2-SHA256 (100k iterations, random salt; malformed or runtime-incompatible hashes are rejected) | Cloudflare D1 (`admin_users`) | None | Retained with user | Internal | None. |
 | **Admin Sessions** (`token_hash`, `user_agent`, `ip_address`) | Session authentication & security monitoring. **Stores raw administrator IP and user-agent.** | Admin login request | Cloudflare D1 (`admin_sessions`) | None | Auto-expires in 12 hours (`expires_at`) | Internal | None. |
 | **Audit Logs** (`actor_admin_email`, `actor_ip`, `actor_user_agent`, `action`, `previous_state`, `new_state`) | Append-only traceability of administrative mutations. **Stores raw administrator IP and user-agent.** | Server audit handler | Cloudflare D1 (`audit_logs`) | None | Permanent append-only | Internal | None. |
 | **Login Rate Limits** (`key`, `attempts`, `locked_until`) | Brute force defense (locks after 5 failures) | Server rate limiter | Cloudflare D1 (`login_rate_limits`) | None | Overwritten / ephemeral | Internal | None. |
 
+### E. First-Party Storefront Analytics (`storefront_analytics_events`)
+
+| Data Field | Purpose | Source | Storage System | External Processor | Retention Status | Customer Disclosure | Owner Decision Needed |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Anonymous Visitor & Session Hashes** (`visitor_hash`, `session_hash`) | Approximate unique visitor and session measurement | Random first-party browser identifiers, irreversibly hashed before storage | Cloudflare D1 | Cloudflare | Rolling 90 days | Privacy Policy §2 | None. Browser storage clearing can create a new anonymous visitor. |
+| **Storefront Events** (`event_type`, `product_id`, `page_path`, `referrer_host`) | Page-view, flow-interest, cart-intent, and traffic-source reporting | Storefront interactions; the original document referrer is reduced in-browser to its hostname (or `Direct` / `Internal`) and retained for the browser session | Cloudflare D1 | Cloudflare | Rolling 90 days | Privacy Policy §2–3 | Full referring URLs, paths, and query strings are not sent or stored. |
+| **Coarse Technical Context** (`ip_network`, `ip_hash`, `country_code`, `region`, `city`, `device_type`, `browser_family`, `os_family`) | Abuse controls and aggregate audience context | Cloudflare request metadata and generalized user-agent classification | Cloudflare D1 | Cloudflare | Rolling 90 days | Privacy Policy §2 | Raw visitor IP and full user-agent strings are not stored. GPC/DNT disables collection. |
+| **Last-Known Cart State** (`product_ids_json`, `item_count`, `cart_value_cents`, `updated_at`) | Distinguish active carts from historical add-to-cart actions and measure cart value | Product identifiers from the functional browser cart; value recalculated from the server catalog | Cloudflare D1 (`storefront_cart_state`) | Cloudflare | Rolling 90 days | Privacy Policy §2 | No email or direct identity is attached. GPC/DNT disables collection; cleared carts are retained with zero items until expiry. |
+
+### F. In-Site Notifications (`storefront_notifications`, `storefront_notification_receipts`)
+
+| Data Field | Purpose | Source | Storage System | External Processor | Retention Status | Customer Disclosure | Owner Decision Needed |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Campaign Content & Target** (`title`, `message`, `audience_type`, `product_id`, `coupon_id`) | Publish a first-party bell notification to all visitors or an anonymous cart segment | Administrator-created campaign | Cloudflare D1 | Cloudflare | Retained until operational deletion | Privacy Policy §2–3 | Deactivate a campaign to stop delivery; creation and activation changes are audited. |
+| **Pseudonymous Delivery State** (`visitor_hash`, `delivered_at`, `read_at`, `dismissed_at`) | Maintain unread badges, prevent dismissed messages from returning, and report aggregate delivery/read counts | Random first-party visitor ID, hashed before storage | Cloudflare D1 | Cloudflare | Rolling 90 days | Privacy Policy §2 and §5 | No customer email or direct identity is attached. GPC/DNT disables the feed and targeting. |
+| **Opt-In Push Subscription** (`endpoint`, `p256dh_key`, `auth_key`, `visitor_hash`) | Deliver user-visible browser notifications when the site is closed | Browser Push API after explicit visitor permission | Cloudflare D1 (`storefront_push_subscriptions`) | Browser or operating-system push service | Active until unsubscribe or expiry; revoked record deleted after 90 days | Privacy Policy §2 and §5 | Endpoint is restricted to recognized browser push-service hosts; no email is attached. GPC/DNT disables enrollment. |
+| **Push Delivery Result** (`notification_id`, `subscription_id`, `status`, `response_status`) | Prevent duplicate sends and report aggregate delivery outcomes | Server delivery attempt | Cloudflare D1 (`storefront_push_deliveries`) | Browser or operating-system push service | Rolling 90 days | Privacy Policy §2 and §5 | Error text is generic and does not store subscription credentials. |
+
 ---
 
-### E. Browser Storage (Client-Side Persistence)
+### G. Browser Storage (Client-Side Persistence)
 
 | Storage Key | Type | Data Stored | Purpose | Lifecycle / Expiration | Customer Disclosure | Owner Decision Needed |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `geelark_cart_items` | `localStorage` | Array of item objects (`id`, `title`, `price`, `quantity`, `platform`) | Preserves customer cart contents between page navigations and refreshes | Persists until customer removes items, clears cart, or clears browser storage | **Required** (Functional / essential storage) | None. |
 | `geelark_active_payment` | `localStorage` | Active order snapshot (`orderId`, `paymentId`, private `statusToken`, `payAddress`, `currency`, `totalUsd`, `status`) | Keeps the private payment screen and locally generated QR code accessible after refresh | Cleared on return to marketplace or order dismissal | **Required** (Functional / essential storage) | None. |
+| `geelark_pending_coupon` | `localStorage` | Coupon code selected from an in-site notification | Carries the selected offer to checkout for one automatic validation attempt | Removed immediately when checkout reads it | Privacy Policy §2 | None. |
+| `geelark_push_sync_at` | `localStorage` | Timestamp of the last successful push-subscription synchronization | Limits background subscription refreshes to once per day | Persists until browser alerts are turned off or browser storage is cleared | Privacy Policy §2 | No endpoint or push keys are stored in this value. |
 | `gf_admin_session` | `Cookie` (`HttpOnly`, `Path=/`, `SameSite=Strict`, `Max-Age=43200`, `Secure` on HTTPS) | 32-byte cryptographically random token | Admin authentication for `/admin` management panel | 12 hours | Internal (Admin only) | None. |
 
 ---
 
-### F. Infrastructure & Subprocessors
+### H. Infrastructure & Subprocessors
 
 | Processor / Entity | Purpose | Data Transferred | Data Processing Location | Privacy Terms / Agreements |
 | :--- | :--- | :--- | :--- | :--- |
 | **Cloudflare, Inc.** | Edge compute (Workers), database (D1), static asset hosting (Assets), and asset storage (R2) | Incoming HTTP requests, customer emails, order records, D1 database records | Global Edge Network (Edge nodes & regional D1 storage) | Cloudflare Standard Customer Agreement & DPA |
 | **NOWPayments** | Cryptocurrency invoice generation, exchange rate resolution, and IPN payment webhooks | Order total (USD), requested cryptocurrency/network, generated payment address, transaction hash | Third-party payment gateway | NOWPayments Terms of Service & Privacy Policy |
 | **Resend, Inc.** | Transactional outbound fulfillment emails and inbound customer email receiving (Svix webhooks) | Customer email address, order details, inbound email subjects, message bodies, attachments | Cloud email delivery infrastructure | Resend Customer Agreement & Privacy Policy |
+| **Browser / OS Push Service** | Encrypted browser-push routing after explicit opt-in | Push endpoint plus encrypted notification payload | Vendor-operated push infrastructure selected by the visitor's browser | Applicable browser or operating-system vendor privacy terms |
 
 ---
 

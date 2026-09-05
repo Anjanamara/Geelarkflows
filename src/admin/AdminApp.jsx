@@ -7,7 +7,10 @@ import AdminOrderDetail from './pages/AdminOrderDetail';
 import AdminPayments from './pages/AdminPayments';
 import AdminFulfillment from './pages/AdminFulfillment';
 import AdminWorkflows from './pages/AdminWorkflows';
+import AdminCoupons from './pages/AdminCoupons';
+import AdminNotifications from './pages/AdminNotifications';
 import AdminCustomers from './pages/AdminCustomers';
+import AdminAnalytics from './pages/AdminAnalytics';
 import AdminCustomRequests from './pages/AdminCustomRequests';
 import AdminMail from './pages/AdminMail';
 import AdminActivity from './pages/AdminActivity';
@@ -22,6 +25,7 @@ export default function AdminApp() {
   const [lastSyncedAt, setLastSyncedAt] = useState(Date.now());
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(20); // seconds (0 = off)
   const [unreadMailCount, setUnreadMailCount] = useState(0);
+  const [fulfillmentAttentionCount, setFulfillmentAttentionCount] = useState(0);
 
   // Sync Unread Mail Badge
   const syncUnreadMail = useCallback(async () => {
@@ -34,11 +38,23 @@ export default function AdminApp() {
     } catch (e) {}
   }, []);
 
+  // Sync Fulfillment Attention Badge
+  const syncFulfillmentAttention = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/dashboard');
+      const data = await res.json();
+      if (res.ok && data.success && data.data?.metrics?.fulfillment_pending !== undefined) {
+        setFulfillmentAttentionCount(data.data.metrics.fulfillment_pending);
+      }
+    } catch (e) {}
+  }, []);
+
   useEffect(() => {
     if (user) {
       syncUnreadMail();
+      syncFulfillmentAttention();
     }
-  }, [user, lastSyncedAt, syncUnreadMail]);
+  }, [user, lastSyncedAt, syncUnreadMail, syncFulfillmentAttention]);
 
   // 1. Session Verification
   const verifySession = useCallback(async () => {
@@ -151,8 +167,17 @@ export default function AdminApp() {
     if (currentPath.startsWith('/admin/workflows')) {
       return <AdminWorkflows lastSyncedAt={lastSyncedAt} />;
     }
+    if (currentPath.startsWith('/admin/coupons')) {
+      return <AdminCoupons lastSyncedAt={lastSyncedAt} user={user} />;
+    }
+    if (currentPath.startsWith('/admin/notifications')) {
+      return <AdminNotifications lastSyncedAt={lastSyncedAt} user={user} />;
+    }
     if (currentPath.startsWith('/admin/customers')) {
       return <AdminCustomers navigate={navigate} lastSyncedAt={lastSyncedAt} />;
+    }
+    if (currentPath.startsWith('/admin/analytics')) {
+      return <AdminAnalytics lastSyncedAt={lastSyncedAt} />;
     }
     if (currentPath.startsWith('/admin/custom-requests')) {
       return <AdminCustomRequests navigate={navigate} lastSyncedAt={lastSyncedAt} user={user} />;
@@ -176,7 +201,10 @@ export default function AdminApp() {
     if (currentPath.startsWith('/admin/payments')) return 'Cryptocurrency Payments';
     if (currentPath.startsWith('/admin/fulfillment')) return 'Fulfillment Dispatch';
     if (currentPath.startsWith('/admin/workflows')) return 'Workflows Analytics';
+    if (currentPath.startsWith('/admin/coupons')) return 'Coupon Management';
+    if (currentPath.startsWith('/admin/notifications')) return 'Website Notifications';
     if (currentPath.startsWith('/admin/customers')) return 'Customer Directory';
+    if (currentPath.startsWith('/admin/analytics')) return 'Visitor & Cart Analytics';
     if (currentPath.startsWith('/admin/custom-requests')) return 'Custom Requests Management';
     if (currentPath.startsWith('/admin/mail')) return 'Internal Mail Inbox';
     if (currentPath.startsWith('/admin/activity')) return 'System Audit Trail';
@@ -195,6 +223,7 @@ export default function AdminApp() {
           isOpen={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
           unreadMailCount={unreadMailCount}
+          attentionCount={fulfillmentAttentionCount}
         />
 
         <div className="admin-main">

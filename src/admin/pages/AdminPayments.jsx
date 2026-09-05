@@ -1,4 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import { formatAdminDate } from '../dateUtils';
+import { redirectIfUnauthorized } from '../apiUtils';
+import { formatStatusLabel } from '../formatUtils';
 
 export default function AdminPayments({ navigate, lastSyncedAt }) {
   const [payments, setPayments] = useState([]);
@@ -53,6 +56,7 @@ export default function AdminPayments({ navigate, lastSyncedAt }) {
           'X-Admin-Action': '1',
         },
       });
+      if (redirectIfUnauthorized(res)) return;
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Sync failed.');
       fetchPayments(pagination.page);
@@ -156,9 +160,9 @@ export default function AdminPayments({ navigate, lastSyncedAt }) {
                       {p.tx_hash ? `${p.tx_hash.slice(0, 10)}...` : '—'}
                     </td>
                     <td>
-                      <span className={`status-badge ${p.status}`}>{p.status}</span>
+                      <span className={`status-badge ${p.status}`}>{formatStatusLabel(p.status)}</span>
                     </td>
-                    <td className="font-mono">{new Date(p.created_at).toLocaleDateString()}</td>
+                    <td className="font-mono">{formatAdminDate(p.created_at)}</td>
                     <td>
                       <div style={{ display: 'flex', gap: '6px' }}>
                         {/^\d+$/.test(p.id) && (

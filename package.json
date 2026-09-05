@@ -12,9 +12,11 @@
     "test": "node scripts/run-tests.mjs",
     "test:webhook": "node scripts/test-webhook-security.mjs",
     "test:schema": "node scripts/test-schema.mjs",
+    "admin:reset-password": "node scripts/reset-admin-password.mjs",
     "deploy": "wrangler deploy"
   },
   "dependencies": {
+    "@block65/webcrypto-web-push": "^1.0.2",
     "hono": "^4.13.4",
     "qrcode": "^1.5.4",
     "react": "^19.2.8",

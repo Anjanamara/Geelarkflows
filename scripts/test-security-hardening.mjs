@@ -121,23 +121,134 @@ assert.equal(disabledBootstrap.status, 403, 'bootstrap must be disabled by defau
 const missingSecretBootstrap = await app.request(bootstrapRequest(), undefined, { DB: bootstrapDb, ADMIN_BOOTSTRAP_ENABLED: 'true' });
 assert.equal(missingSecretBootstrap.status, 503, 'bootstrap must never use a hardcoded fallback secret');
 
+let generatedPasswordHash = '';
+const enabledBootstrapDb = {
+  prepare(sql) {
+    return {
+      async first() {
+        return { count: 0 };
+      },
+      bind(...values) {
+        if (sql.includes('INSERT INTO admin_users')) generatedPasswordHash = values[2];
+        return { run: async () => ({}) };
+      },
+    };
+  },
+};
+const enabledBootstrap = await app.request(bootstrapRequest(), undefined, {
+  DB: enabledBootstrapDb,
+  ADMIN_BOOTSTRAP_ENABLED: 'true',
+  ADMIN_BOOTSTRAP_SECRET: 'geelark_initial_bootstrap_key_2026',
+});
+assert.equal(enabledBootstrap.status, 200, 'securely configured bootstrap must create the initial administrator');
+assert.match(
+  generatedPasswordHash,
+  /^pbkdf2_sha256\$100000\$[a-f0-9]{32}\$[a-f0-9]{64}$/,
+  'administrator hashes must stay within the Cloudflare Workers PBKDF2 limit',
+);
+
+const legacyHashDb = {
+  prepare(sql) {
+    const statement = {
+      bind() {
+        return statement;
+      },
+      async first() {
+        if (sql.includes('FROM admin_users')) {
+          return {
+            id: 'usr_legacy',
+            email: 'admin@example.com',
+            password_hash: `pbkdf2_sha256$600000$${'ab'.repeat(16)}$${'cd'.repeat(32)}`,
+            role: 'SUPER_ADMIN',
+            name: 'Legacy Administrator',
+          };
+        }
+        return null;
+      },
+      async run() {
+        return {};
+      },
+    };
+    return statement;
+  },
+};
+const legacyHashLogin = await app.request(
+  new Request('https://geelarkflows.com/api/admin/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'admin@example.com', password: 'StrongPassword1!' }),
+  }),
+  undefined,
+  { DB: legacyHashDb },
+);
+assert.equal(legacyHashLogin.status, 503, 'runtime-incompatible legacy hashes must fail without invoking PBKDF2');
+assert.deepEqual(await legacyHashLogin.json(), {
+  success: false,
+  error: 'Administrator password reset required. Contact the site owner.',
+});
+
 const workerSource = fs.readFileSync('src/worker.js', 'utf8');
 assert(!workerSource.includes('master_package.zip'), 'universal master package must not be used');
 assert(!workerSource.includes('api.qrserver.com'), 'payment addresses must not be disclosed to a QR service');
 
+const wranglerConfig = JSON.parse(fs.readFileSync('wrangler.jsonc', 'utf8'));
+assert.deepEqual(
+  wranglerConfig.assets?.run_worker_first,
+  ['/*', '!/assets/*'],
+  'public navigation must run through the HTTPS enforcement middleware',
+);
+assert.equal(wranglerConfig.assets?.not_found_handling, 'none', 'Worker must retain control of real 404 responses');
+for (const hostname of ['geelarkflows.com', 'www.geelarkflows.com']) {
+  assert.ok(
+    wranglerConfig.routes?.some((route) => route.pattern === hostname && route.custom_domain === true),
+    `${hostname} must be registered as a Worker custom domain`,
+  );
+}
+
 const assetEnv = {
+  SITE_URL: 'https://geelarkflows.com',
   ASSETS: {
     async fetch(request) {
       const pathname = new URL(request.url).pathname;
-      return pathname === '/index.html'
+      return pathname === '/' || pathname === '/index.html'
         ? new Response('<!doctype html><title>GeeLark Flows</title>', { status: 200, headers: { 'Content-Type': 'text/html' } })
         : new Response('Not Found', { status: 404 });
     },
   },
 };
 
+const insecureAdminRequest = await app.request(
+  'http://geelarkflows.com/admin/login?next=%2Fadmin',
+  undefined,
+  assetEnv,
+);
+assert.equal(insecureAdminRequest.status, 308, 'public HTTP requests must permanently redirect to HTTPS');
+assert.equal(
+  insecureAdminRequest.headers.get('Location'),
+  'https://geelarkflows.com/admin/login?next=%2Fadmin',
+  'HTTPS redirect must preserve the complete path and query string',
+);
+
+const wwwRequest = await app.request('https://www.geelarkflows.com/cart?source=safari', undefined, assetEnv);
+assert.equal(wwwRequest.status, 308, 'legacy www hostname must redirect to the canonical hostname');
+assert.equal(
+  wwwRequest.headers.get('Location'),
+  'https://geelarkflows.com/cart?source=safari',
+  'www redirect must preserve the complete path and query string',
+);
+
 const validCartDeepLink = await app.request('https://geelarkflows.com/cart', undefined, assetEnv);
 assert.equal(validCartDeepLink.status, 200, 'known SPA route must receive the index shell');
+assert.equal(
+  validCartDeepLink.headers.get('Strict-Transport-Security'),
+  'max-age=31536000; includeSubDomains; preload',
+  'HTTPS pages must teach browsers to use HTTPS for future visits',
+);
+assert.match(
+  validCartDeepLink.headers.get('Content-Security-Policy') || '',
+  /upgrade-insecure-requests/,
+  'HTTPS pages must upgrade any accidentally insecure subresources',
+);
 
 const validFlowDeepLink = await app.request('https://geelarkflows.com/flows/instagram-account-creation/', undefined, assetEnv);
 assert.equal(validFlowDeepLink.status, 200, 'known catalog flow route must receive the index shell');

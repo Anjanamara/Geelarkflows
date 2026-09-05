@@ -39,7 +39,17 @@ We use browser local storage solely for basic site functionality:
 - To keep your active cryptocurrency payment screen and QR code accessible if you refresh during checkout.
 - We do not use marketing or advertising cookies.
 
-#### 2.6 Infrastructure & Administrative Records
+#### 2.6 First-Party Analytics & In-Site Notifications
+- A random pseudonymous browser identifier is used to measure approximate unique visitors, page views, cart additions, last-known cart contents, and traffic sources. The original referring website is reduced to its hostname; full referring paths and query strings are not sent or stored. We retain only a masked network range, coarse location supplied by Cloudflare, and generalized device information rather than a full visitor IP address or full user-agent string.
+- The same identifier and last-known cart state can select a relevant first-party message or coupon for the website notification bell. We record whether a notification was delivered, read, or dismissed; this feature does not require an email address.
+- Global Privacy Control and browser Do Not Track signals disable this collection and notification targeting.
+
+#### 2.7 Optional Browser Push
+- Browser push is enrolled only after a visitor presses the website's Enable button and approves the browser permission prompt.
+- We store the pseudonymous push endpoint and public encryption material issued by the browser, associate it with the pseudonymous visitor identifier for campaign targeting, and record delivery success or failure. No email address is required.
+- Push delivery is handled by the push service operated by the visitor's browser or operating-system vendor. Visitors can turn alerts off in the site notification panel or revoke permission in browser settings. Global Privacy Control and Do Not Track disable enrollment.
+
+#### 2.8 Infrastructure & Administrative Records
 - Our hosting and edge infrastructure (provided by Cloudflare) handles standard network connection information necessary for security, routing, and delivery.
 - Administrative session and audit records may include security identifiers, IP addresses, user-agent information, and actions performed in the administrative system for operator authentication and audit logging.
 
@@ -53,6 +63,8 @@ Information is used strictly for operational purposes:
 - Coordinating GeeLark Account Setup services.
 - Responding to support inquiries and troubleshooting technical issues.
 - Reviewing custom automation requests.
+- Measuring storefront performance and presenting first-party in-site updates or relevant cart offers.
+- Delivering browser notifications to visitors who explicitly opt in.
 - Protecting the website against abuse and spam.
 - Maintaining operational, accounting, payment, and legal record-keeping.
 
@@ -66,12 +78,13 @@ We rely on technical infrastructure providers to operate the storefront:
 - **Cloudflare, Inc.**: Hosting, edge network, database, and asset storage.
 - **NOWPayments**: Cryptocurrency invoice generation and payment status monitoring.
 - **Resend, Inc.**: Transactional email delivery and inbound support email processing.
+- **Browser / Operating-System Push Service**: Encrypted delivery of browser notifications to visitors who opt in.
 
 ---
 
 ### 5. Data Retention
 
-Information is retained for as long as reasonably necessary to provide the service, maintain operational and payment records, resolve disputes, prevent fraud or abuse, satisfy legitimate business requirements, and comply with applicable legal obligations.
+Storefront analytics events, last-known cart state, pseudonymous notification delivery/read/dismissal state, and browser-push delivery results are retained on a rolling 90-day basis. Active browser-push subscriptions remain until the visitor unsubscribes or the browser reports expiry; revoked subscription records are deleted after 90 days. Other information is retained for as long as reasonably necessary to provide the service, maintain operational and payment records, resolve disputes, prevent fraud or abuse, satisfy legitimate business requirements, and comply with applicable legal obligations.
 
 Where information is no longer reasonably needed, it may be deleted or de-identified.
 

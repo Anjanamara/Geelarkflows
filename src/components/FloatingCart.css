@@ -7,15 +7,15 @@
   gap: 7px;
   border-radius: 9px;
   background: linear-gradient(135deg, #7565ef, #927fff);
-  color: #fff;
+  color: var(--text-primary);
   box-shadow: 0 8px 24px rgba(112,91,230,.22);
   transition: transform 160ms ease, background 160ms ease;
 }
 .floating-cart-pill:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(112,91,230,.34); }
 .floating-cart-icon { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
-.floating-cart-label { font-size: 0.7rem; font-weight: 750; }
-.floating-cart-badge { min-width: 20px; height: 20px; padding: 0 5px; display: grid; place-items: center; border-radius: 6px; background: #fff; color: #6654dc; font-family: var(--font-mono); font-size: 0.62rem; font-weight: 800; }
-.floating-cart-total { padding-left: 2px; color: #c6cbc4; font-family: var(--font-mono); font-size: 0.59rem; }
+.floating-cart-label { font-size: var(--type-caption); font-weight: 750; }
+.floating-cart-badge { min-width: 20px; height: 20px; padding: 0 5px; display: grid; place-items: center; border-radius: 6px; background: #fff; color: #6654dc; font-family: var(--font-mono); font-size: var(--type-caption); font-weight: 800; }
+.floating-cart-total { padding-left: 2px; color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--type-caption); }
 .cart-impact-active { animation: cart-nudge 300ms ease; }
 .badge-pop { animation: badge-pop 300ms ease; }
 @keyframes cart-nudge { 50% { transform: scale(1.04); } }
@@ -23,5 +23,5 @@
 @media (max-width: 540px) {
   .floating-cart-label, .floating-cart-total { display: none; }
   .floating-cart-pill { width: 42px; min-height: 42px; padding: 0; justify-content: center; position: relative; }
-  .floating-cart-badge { min-width: 16px; height: 16px; padding: 0 3px; position: absolute; top: -4px; right: -4px; border: 2px solid var(--bg-primary); font-size: 0.49rem; }
+  .floating-cart-badge { min-width: 16px; height: 16px; padding: 0 3px; position: absolute; top: -4px; right: -4px; border: 2px solid var(--bg-primary); font-size: var(--type-caption); }
 }

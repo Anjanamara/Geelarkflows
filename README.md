@@ -50,9 +50,25 @@ npx wrangler secret put NOWPAYMENTS_IPN_SECRET
 npx wrangler secret put RESEND_API_KEY
 npx wrangler secret put RESEND_WEBHOOK_SECRET
 npx wrangler secret put ADMIN_BOOTSTRAP_SECRET
+npx wrangler secret put VAPID_PUBLIC_KEY
+npx wrangler secret put VAPID_PRIVATE_KEY
+npx wrangler secret put VAPID_SUBJECT
+npx wrangler secret put ANALYTICS_HASH_SALT
 ```
 
 `ADMIN_BOOTSTRAP_SECRET` must contain at least 32 characters. Bootstrap is disabled by default with `ADMIN_BOOTSTRAP_ENABLED=false`. Enable it only for the initial administrator creation, provision the administrator, then immediately disable it and deploy again.
+
+`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` (generate with `npx web-push generate-vapid-keys`) enable browser push notifications; if any of the three is missing, push stays silently disabled. `ANALYTICS_HASH_SALT` pseudonymizes visitor/IP hashes for storefront analytics and must be set explicitly — it must not be left to fall back to `ADMIN_BOOTSTRAP_SECRET`.
+
+### Administrator password recovery
+
+Cloudflare Workers accepts at most 100,000 PBKDF2 iterations. If an administrator was provisioned by an older release that generated a 600,000-iteration hash, deploy the current Worker first and then replace that incompatible verifier from an authenticated Wrangler terminal:
+
+```bash
+npm run admin:reset-password -- --email admin@example.com --remote
+```
+
+The command prompts for the new password without echoing it, generates a fresh random salt, and updates only the matching administrator in the remote D1 database. It never places the plaintext password in command history or source files.
 
 Apply database migrations before deploying code that expects the new columns:
 

@@ -3,13 +3,14 @@ import { CartProvider, useCart } from './context/CartContext';
 import { FilterProvider } from './context/FilterContext';
 import FilterHeader from './components/FilterHeader';
 import ProductGrid from './components/ProductGrid';
-import ProductModal from './components/ProductModal';
 import CustomRequestModal from './components/CustomRequestModal';
 import CartToast from './components/CartToast';
 import FloatingCart from './components/FloatingCart';
+import StorefrontNotifications from './components/StorefrontNotifications';
 import MrBeanFoldAnimation from './components/MrBeanFoldAnimation';
 import Footer from './components/Footer';
 import { products, specialties } from './data/products';
+import { trackPageView } from './analytics';
 import './App.css';
 
 const AdminApp = lazy(() => import('./admin/AdminApp'));
@@ -17,11 +18,12 @@ const CartPage = lazy(() => import('./pages/CartPage'));
 const CheckoutPage = lazy(() => import('./pages/CheckoutPage'));
 const ContactPage = lazy(() => import('./pages/ContactPage'));
 const LegalPage = lazy(() => import('./pages/LegalPage'));
+const FlowDetailPage = lazy(() => import('./pages/FlowDetailPage'));
 const siteUrl = 'https://geelarkflows.com';
 
-const getProductFromPath = () => {
-  const match = window.location.pathname.match(/^\/flows\/([^/]+)\/?$/);
-  return match ? products.find((product) => product.id === match[1]) || null : null;
+const getFlowIdFromPath = (path) => {
+  const match = path.match(/^\/flows\/([^/]+)\/?$/);
+  return match ? match[1] : null;
 };
 
 const setMetaContent = (selector, attribute, value) => {
@@ -49,8 +51,8 @@ const faqs = [
     answer: 'You receive the complete workflow shown on the product card, configured for the named platform and your agreed operating inputs. Each detail page lists the exact actions the flow handles.',
   },
   {
-    question: 'Do all flows include a video demo?',
-    answer: 'No. A demo appears only when a useful, accurate recording is available. Products without a demo do not reserve empty media space, so the catalog remains compact and easy to scan.',
+    question: 'How are checkout, payment, and delivery handled?',
+    answer: 'Before an invoice is created, checkout shows the workflow subtotal, any setup fee or coupon discount, the final USD total, and your selected USDT network. Payment status is verified through NOWPayments before fulfillment begins, and support is available at support@geelarkflows.com.',
   },
   {
     question: 'Can these flows manage multiple social media accounts?',
@@ -66,6 +68,13 @@ const operationSteps = [
   ['01', 'Choose the exact flow', 'Compare scope, supported actions, and price directly in the catalog.'],
   ['02', 'Share your operating inputs', 'After purchase, we confirm the platform and configuration needed for your setup.'],
   ['03', 'Receive a reusable workflow', 'Run the delivered automation repeatedly for your authorized operation.'],
+];
+
+const trustSignals = [
+  ['01', 'Exact scope before checkout', 'Each catalog card and detail view states the workflow actions, platform, reusable license, and fixed price before you buy.'],
+  ['02', 'Transparent order total', 'Checkout itemizes the workflow subtotal, setup fee, coupon discount, final USD total, and selected USDT network before creating an invoice.'],
+  ['03', 'Verified payment status', 'The payment address and settlement status come from NOWPayments. Fulfillment starts only after the payment reaches a confirmed state.'],
+  ['04', 'Published support policies', 'Delivery, refund limits, privacy practices, acceptable use, and a real support address are available before purchase.'],
 ];
 
 function Brand({ href = '#top', onClick }) {
@@ -92,36 +101,21 @@ function CartDeliveryAnimation() {
 }
 
 function Storefront({ navigate }) {
-  const [selectedProduct, setSelectedProduct] = useState(getProductFromPath);
   const [isCustomRequestModalOpen, setIsCustomRequestModalOpen] = useState(false);
   const [customRequestType, setCustomRequestType] = useState('flow');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   useEffect(() => {
-    const handleLocationChange = () => setSelectedProduct(getProductFromPath());
-    window.addEventListener('popstate', handleLocationChange);
-    return () => window.removeEventListener('popstate', handleLocationChange);
-  }, []);
-
-  useEffect(() => {
-    const pageTitle = selectedProduct
-      ? `${selectedProduct.title} GeeLark Flow | GeeLark Flows`
-      : 'GeeLark Automation Flows for Social Media & Mobile';
-    const pageDescription = selectedProduct
-      ? `${selectedProduct.details.description} Reusable GeeLark automation with unlimited runs. $${selectedProduct.price.toLocaleString('en-US')} USD.`
-      : 'Buy reusable GeeLark automation flows for Instagram, TikTok, Snapchat, Reddit, Facebook, YouTube, Threads, dating apps, mobile SEO, and account management.';
-    const canonicalUrl = selectedProduct ? `${siteUrl}/flows/${selectedProduct.id}/` : `${siteUrl}/`;
-
-    document.title = pageTitle;
-    setCanonicalUrl(canonicalUrl);
-    setMetaContent('meta[name="description"]', 'content', pageDescription);
-    setMetaContent('meta[property="og:title"]', 'content', pageTitle);
-    setMetaContent('meta[property="og:description"]', 'content', pageDescription);
-    setMetaContent('meta[property="og:url"]', 'content', canonicalUrl);
-    setMetaContent('meta[name="twitter:title"]', 'content', pageTitle);
-    setMetaContent('meta[name="twitter:description"]', 'content', pageDescription);
+    document.title = 'GeeLark Automation Flows for Social Media & Mobile';
+    setCanonicalUrl(`${siteUrl}/`);
+    setMetaContent('meta[name="description"]', 'content', 'Buy reusable GeeLark automation flows for Instagram, TikTok, Snapchat, Reddit, Facebook, YouTube, Threads, dating apps, mobile SEO, and account management.');
+    setMetaContent('meta[property="og:title"]', 'content', 'GeeLark Automation Flows for Social Media & Mobile');
+    setMetaContent('meta[property="og:description"]', 'content', 'Buy reusable GeeLark automation flows for Instagram, TikTok, Snapchat, Reddit, Facebook, YouTube, Threads, dating apps, mobile SEO, and account management.');
+    setMetaContent('meta[property="og:url"]', 'content', `${siteUrl}/`);
+    setMetaContent('meta[name="twitter:title"]', 'content', 'GeeLark Automation Flows for Social Media & Mobile');
+    setMetaContent('meta[name="twitter:description"]', 'content', 'Buy reusable GeeLark automation flows for Instagram, TikTok, Snapchat, Reddit, Facebook, YouTube, Threads, dating apps, mobile SEO, and account management.');
     setMetaContent('meta[name="robots"]', 'content', 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1');
-  }, [selectedProduct]);
+  }, []);
 
   const openRequest = (type = 'flow') => {
     setCustomRequestType(type);
@@ -134,16 +128,7 @@ function Storefront({ navigate }) {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const openProduct = (product) => {
-    const productPath = `/flows/${product.id}/`;
-    if (window.location.pathname !== productPath) window.history.pushState({ productId: product.id }, '', productPath);
-    setSelectedProduct(product);
-  };
-
-  const closeProduct = () => {
-    if (window.location.pathname.startsWith('/flows/')) window.history.pushState({}, '', '/');
-    setSelectedProduct(null);
-  };
+  const openProduct = (product) => navigate(`/flows/${product.id}/`);
 
   const structuredData = {
     '@context': 'https://schema.org',
@@ -203,6 +188,7 @@ function Storefront({ navigate }) {
           </nav>
           <div className="nav-actions">
             <button className="nav-custom-button" type="button" onClick={() => openRequest('flow')}>Custom build</button>
+            <StorefrontNotifications />
             <FloatingCart />
             <button
               className="menu-button"
@@ -304,10 +290,28 @@ function Storefront({ navigate }) {
           </div>
         </section>
 
+        <section className="trust-section" id="trust" aria-labelledby="trust-title">
+          <div className="section-heading trust-heading">
+            <div><span className="section-kicker">Before you buy</span><h2 id="trust-title">What's visible before you pay.</h2></div>
+            <p>Scope, price, payment status, and policy terms are documented before checkout, not after.</p>
+          </div>
+          <div className="trust-grid">
+            {trustSignals.map(([number, title, copy]) => (
+              <article key={number}><span>{number}</span><div><h3>{title}</h3><p>{copy}</p></div></article>
+            ))}
+          </div>
+          <nav className="trust-policy-links" aria-label="Purchase policies and support">
+            <a href="/refund-policy" onClick={(event) => { event.preventDefault(); navigate('/refund-policy'); }}>Refund policy <span aria-hidden="true">↗</span></a>
+            <a href="/privacy" onClick={(event) => { event.preventDefault(); navigate('/privacy'); }}>Privacy policy <span aria-hidden="true">↗</span></a>
+            <a href="/terms" onClick={(event) => { event.preventDefault(); navigate('/terms'); }}>Terms of service <span aria-hidden="true">↗</span></a>
+            <a href="/contact" onClick={(event) => { event.preventDefault(); navigate('/contact'); }}>Contact support <span aria-hidden="true">↗</span></a>
+          </nav>
+        </section>
+
         <section className="faq-section" id="faq">
           <div className="section-heading faq-heading">
             <div><span className="section-kicker">Before you buy</span><h2>Clear answers. No fine-print surprises.</h2></div>
-            <p>Scope, reuse, demos, account scale, and custom development—explained plainly.</p>
+            <p>Scope, reuse, checkout, account scale, and custom development—explained plainly.</p>
           </div>
           <div className="faq-list">
             {faqs.map((faq, index) => (
@@ -323,7 +327,6 @@ function Storefront({ navigate }) {
       </main>
 
       <Footer navigate={navigate} onOpenCustomRequest={openRequest} />
-      <ProductModal product={selectedProduct} onClose={closeProduct} />
       <CustomRequestModal isOpen={isCustomRequestModalOpen} onClose={() => setIsCustomRequestModalOpen(false)} requestType={customRequestType} />
     </div>
   );
@@ -355,9 +358,17 @@ export default function App() {
       '/cart': { title: 'Your Flow Cart | GeeLark Flows', description: 'Review selected reusable GeeLark automation flows before checkout.', index: false },
       '/checkout': { title: 'Secure Checkout | GeeLark Flows', description: 'Create and securely monitor a GeeLark Flows USDT invoice.', index: false },
     };
+    const flowId = getFlowIdFromPath(currentPath);
+    const flowProduct = flowId ? products.find((product) => product.id === flowId) : null;
     const metadata = currentPath.startsWith('/admin')
       ? { title: 'Administration | GeeLark Flows', description: 'Private administration area.', index: false }
-      : routeMeta[currentPath];
+      : flowProduct
+        ? {
+          title: `${flowProduct.title} GeeLark Flow | GeeLark Flows`,
+          description: `${flowProduct.details.description} Reusable GeeLark automation with unlimited runs. $${flowProduct.price.toLocaleString('en-US')} USD.`,
+          index: true,
+        }
+        : routeMeta[currentPath];
     if (!metadata) return;
 
     const canonicalUrl = `${siteUrl}${currentPath}`;
@@ -372,21 +383,28 @@ export default function App() {
     setMetaContent('meta[name="robots"]', 'content', metadata.index ? 'index, follow' : 'noindex, nofollow');
   }, [currentPath]);
 
+  useEffect(() => {
+    trackPageView(currentPath);
+  }, [currentPath]);
+
   if (currentPath.startsWith('/admin')) {
     return <Suspense fallback={<div className="route-loading">Loading secure administration…</div>}><AdminApp /></Suspense>;
   }
+
+  const flowId = getFlowIdFromPath(currentPath);
 
   return (
     <CartProvider>
       <FilterProvider>
         <Suspense fallback={<div className="route-loading">Loading…</div>}>
-          {currentPath === '/cart' ? <CartPage navigate={navigate} />
-            : currentPath === '/checkout' ? <CheckoutPage navigate={navigate} />
-              : currentPath === '/contact' ? <ContactPage navigate={navigate} />
-                : currentPath === '/terms' ? <LegalPage type="terms" navigate={navigate} />
-                  : currentPath === '/privacy' ? <LegalPage type="privacy" navigate={navigate} />
-                    : currentPath === '/refund-policy' ? <LegalPage type="refund-policy" navigate={navigate} />
-                      : <Storefront navigate={navigate} />}
+          {flowId ? <FlowDetailPage productId={flowId} navigate={navigate} />
+            : currentPath === '/cart' ? <CartPage navigate={navigate} />
+              : currentPath === '/checkout' ? <CheckoutPage navigate={navigate} />
+                : currentPath === '/contact' ? <ContactPage navigate={navigate} />
+                  : currentPath === '/terms' ? <LegalPage type="terms" navigate={navigate} />
+                    : currentPath === '/privacy' ? <LegalPage type="privacy" navigate={navigate} />
+                      : currentPath === '/refund-policy' ? <LegalPage type="refund-policy" navigate={navigate} />
+                        : <Storefront navigate={navigate} />}
         </Suspense>
       </FilterProvider>
     </CartProvider>

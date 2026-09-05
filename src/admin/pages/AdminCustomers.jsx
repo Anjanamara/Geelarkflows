@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { formatAdminDate } from '../dateUtils';
 
 export default function AdminCustomers({ navigate, lastSyncedAt }) {
   const [customers, setCustomers] = useState([]);
@@ -10,6 +11,7 @@ export default function AdminCustomers({ navigate, lastSyncedAt }) {
   const [selectedEmail, setSelectedEmail] = useState(null);
   const [customerDetail, setCustomerDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState(null);
 
   const fetchCustomers = async () => {
     setLoading(true);
@@ -36,15 +38,21 @@ export default function AdminCustomers({ navigate, lastSyncedAt }) {
 
   const openCustomerDetail = async (email) => {
     setSelectedEmail(email);
+    setCustomerDetail(null);
+    setDetailError(null);
     setDetailLoading(true);
     try {
       const res = await fetch(`/api/admin/customers/${encodeURIComponent(email)}`);
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setCustomerDetail(data.customer);
+      if (res.status === 401) {
+        window.location.href = '/admin/login';
+        return;
       }
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load customer history.');
+      setCustomerDetail(data.customer);
     } catch (err) {
       console.error('Customer fetch error:', err);
+      setDetailError(err.message);
     } finally {
       setDetailLoading(false);
     }
@@ -129,8 +137,8 @@ export default function AdminCustomers({ navigate, lastSyncedAt }) {
                     <td className="font-mono" style={{ fontWeight: 700, color: 'var(--admin-accent)' }}>
                       ${Number(cust.total_spent || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                     </td>
-                    <td className="font-mono">{cust.first_order_at ? new Date(cust.first_order_at).toLocaleDateString() : '—'}</td>
-                    <td className="font-mono">{cust.last_order_at ? new Date(cust.last_order_at).toLocaleDateString() : '—'}</td>
+                    <td className="font-mono">{formatAdminDate(cust.first_order_at)}</td>
+                    <td className="font-mono">{formatAdminDate(cust.last_order_at)}</td>
                     <td>
                       <button
                         type="button"
@@ -165,8 +173,15 @@ export default function AdminCustomers({ navigate, lastSyncedAt }) {
             </div>
 
             <div className="admin-modal-body">
-              {detailLoading || !customerDetail ? (
+              {detailLoading ? (
                 <div style={{ padding: '24px', textAlign: 'center', color: 'var(--admin-text-muted)' }}>Loading history...</div>
+              ) : detailError ? (
+                <div style={{ padding: '24px', textAlign: 'center' }}>
+                  <div style={{ color: 'var(--admin-danger, #e05252)', marginBottom: '12px' }}>{detailError}</div>
+                  <button type="button" className="btn-admin-secondary" onClick={() => openCustomerDetail(selectedEmail)}>Retry</button>
+                </div>
+              ) : !customerDetail ? (
+                <div style={{ padding: '24px', textAlign: 'center', color: 'var(--admin-text-muted)' }}>No history found.</div>
               ) : (
                 <>
                   <div className="stats-grid" style={{ gridTemplateColumns: '1fr 1fr', margin: 0 }}>
@@ -206,7 +221,7 @@ export default function AdminCustomers({ navigate, lastSyncedAt }) {
                               #{ord.id}
                             </span>
                             <span className="font-mono" style={{ fontSize: '11px', color: 'var(--admin-text-muted)' }}>
-                              {new Date(ord.created_at).toLocaleDateString()} · ${Number(ord.total_usd || 0).toFixed(2)} USD
+                              {formatAdminDate(ord.created_at)} · ${Number(ord.total_usd || 0).toFixed(2)} USD
                             </span>
                           </div>
                           <span className={`status-badge ${ord.status}`}>{ord.status}</span>

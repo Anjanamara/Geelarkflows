@@ -10,6 +10,11 @@ const suites = [
   'scripts/test-delivery-pricing-lifecycle.mjs',
   'scripts/test-custom-request.mjs',
   'scripts/test-cart-checkout-flow.mjs',
+  'scripts/test-storefront-typography.mjs',
+  'scripts/test-storefront-analytics.mjs',
+  'scripts/test-storefront-notifications.mjs',
+  'scripts/test-coupon-checkout-intent.mjs',
+  'scripts/test-order-consistency.mjs',
   'scripts/test-schema.mjs',
 ];
 

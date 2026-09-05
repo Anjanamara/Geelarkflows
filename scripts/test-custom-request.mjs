@@ -882,6 +882,20 @@ await runAsyncTest('Case 27: Dedicated migration scripts/migrate-custom-requests
   assert.ok(!sql.match(/\bDELETE\b/i), 'Migration must not contain DELETE statements');
 });
 
+// 28. Inspect dialog uses the shared, correctly stacked modal structure
+await runAsyncTest('Case 28: Admin Inspect dialog renders its card inside the modal overlay', async () => {
+  const pagePath = path.resolve('src/admin/pages/AdminCustomRequests.jsx');
+  const source = fs.readFileSync(pagePath, 'utf8');
+  const overlayStart = source.indexOf('<div className="admin-modal-overlay" onClick={closeDetail}>');
+  const cardStart = source.indexOf('className="admin-modal-card"', overlayStart);
+  const dialogRole = source.indexOf('role="dialog"', cardStart);
+
+  assert.ok(overlayStart >= 0, 'Inspect dialog must render the modal overlay');
+  assert.ok(cardStart > overlayStart, 'Modal card must be nested inside the overlay stacking context');
+  assert.ok(dialogRole > cardStart, 'Modal card must expose an accessible dialog role');
+  assert.ok(!source.includes('className="admin-modal"'), 'Undefined admin-modal class must not be used');
+});
+
 console.log('\n================================================================');
 console.log(`  RESULT: ${passCount}/${passCount + failCount} Scenarios Passed (${Math.round((passCount / (passCount + failCount)) * 100)}%)`);
 console.log('================================================================\n');

@@ -1,13 +1,13 @@
-.cart-toast-banner { position: fixed; top: 82px; right: max(18px, calc((100vw - var(--site-width)) / 2)); z-index: 95; width: min(400px, calc(100vw - 36px)); padding: 13px; display: grid; grid-template-columns: 36px minmax(0,1fr) auto; align-items: center; gap: 12px; border: 1px solid var(--border-medium); border-radius: 13px; background: #0d1521; color: #f3f6fb; box-shadow: 0 20px 60px rgba(0,0,0,0.42); animation: toast-enter 200ms ease-out; }
+.cart-toast-banner { position: fixed; top: 82px; right: max(18px, calc((100vw - var(--site-width)) / 2)); z-index: 95; width: min(400px, calc(100vw - 36px)); padding: 13px; display: grid; grid-template-columns: 36px minmax(0,1fr) auto; align-items: center; gap: 12px; border: 1px solid var(--border-medium); border-radius: 13px; background: #0d1521; color: var(--text-primary); box-shadow: 0 20px 60px rgba(0,0,0,0.42); animation: toast-enter 200ms ease-out; }
 @keyframes toast-enter { from { opacity: 0; transform: translateY(-8px); } }
-.toast-icon-wrap { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: rgba(183,237,97,0.12); color: var(--accent-lime); font-size: 0.7rem; }
-.toast-remove .toast-icon-wrap { background: rgba(221,80,91,0.13); color: #f08a92; }
+.toast-icon-wrap { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: rgba(183,237,97,0.12); color: var(--accent-lime); font-size: var(--type-caption); }
+.toast-remove .toast-icon-wrap { background: rgba(221,80,91,0.13); color: var(--accent-danger); }
 .toast-body { min-width: 0; }
-.toast-eyebrow { color: var(--accent-lime); font-size: 0.53rem; font-weight: 800; letter-spacing: 0.07em; text-transform: uppercase; }
-.toast-remove .toast-eyebrow { color: #f08a92; }
-.toast-title { margin-top: 2px; overflow: hidden; font-size: 0.67rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.toast-price { margin-top: 1px; color: #899089; font-family: var(--font-mono); font-size: 0.54rem; }
+.toast-eyebrow { color: var(--accent-lime); font-size: var(--type-caption); font-weight: 800; letter-spacing: 0.07em; text-transform: uppercase; }
+.toast-remove .toast-eyebrow { color: var(--accent-danger); }
+.toast-title { margin-top: 2px; overflow: hidden; font-size: var(--type-caption); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.toast-price { margin-top: 1px; color: var(--text-muted); font-family: var(--font-mono); font-size: var(--type-caption); }
 .toast-actions { display: flex; align-items: center; gap: 5px; }
-.toast-view-cart-btn { min-height: 34px; padding: 0 10px; border-radius: 8px; background: linear-gradient(135deg,#7565ef,#927fff); color: white; font-size: 0.67rem; font-weight: 750; }
-.toast-close-btn { width: 32px; height: 32px; color: #899089; font-size: 0.64rem; }
+.toast-view-cart-btn { min-height: 34px; padding: 0 10px; border-radius: 8px; background: linear-gradient(135deg,#7565ef,#927fff); color: white; font-size: var(--type-caption); font-weight: 750; }
+.toast-close-btn { width: 32px; height: 32px; color: var(--text-muted); font-size: var(--type-caption); }
 @media (max-width: 600px) { .cart-toast-banner { top: 72px; left: 12px; right: 12px; width: auto; } }

@@ -1,4 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { toAdminDate } from '../dateUtils';
+import { redirectIfUnauthorized } from '../apiUtils';
 
 export default function AdminMail({ navigate, lastSyncedAt, user, onActionSuccess }) {
   const [emails, setEmails] = useState([]);
@@ -48,16 +50,16 @@ export default function AdminMail({ navigate, lastSyncedAt, user, onActionSucces
       setEmails(data.emails || []);
       setUnreadCount(data.unread_count || 0);
 
-      // If nothing selected or selected email no longer in list, auto-select first on desktop
-      if (!selectedId && data.emails && data.emails.length > 0 && window.innerWidth >= 900) {
-        setSelectedId(data.emails[0].id);
+      // If nothing selected, auto-select first on desktop
+      if (data.emails && data.emails.length > 0 && window.innerWidth >= 900) {
+        setSelectedId((prev) => (prev ? prev : data.emails[0].id));
       }
     } catch (err) {
       setError(err.message);
     } finally {
       if (!isBackground) setLoading(false);
     }
-  }, [activeFilter, searchQuery, selectedId]);
+  }, [activeFilter, searchQuery]);
 
   useEffect(() => {
     fetchEmails();
@@ -115,6 +117,7 @@ export default function AdminMail({ navigate, lastSyncedAt, user, onActionSucces
         },
         body: JSON.stringify({ is_read: newStatus }),
       });
+      if (redirectIfUnauthorized(res)) return;
       const json = await res.json();
       if (res.ok && json.success) {
         setEmails((prev) =>
@@ -142,6 +145,7 @@ export default function AdminMail({ navigate, lastSyncedAt, user, onActionSucces
         },
         body: JSON.stringify({ is_archived: newStatus }),
       });
+      if (redirectIfUnauthorized(res)) return;
       const json = await res.json();
       if (res.ok && json.success) {
         // Refresh list
@@ -171,6 +175,7 @@ export default function AdminMail({ navigate, lastSyncedAt, user, onActionSucces
         },
         body: JSON.stringify({ order_id: targetOrderId.trim() || null }),
       });
+      if (redirectIfUnauthorized(res)) return;
       const json = await res.json();
 
       if (!res.ok || !json.success) {
@@ -203,6 +208,7 @@ export default function AdminMail({ navigate, lastSyncedAt, user, onActionSucces
         },
         body: JSON.stringify({ text: replyText }),
       });
+      if (redirectIfUnauthorized(res)) return;
       const json = await res.json();
 
       if (!res.ok || !json.success) {
@@ -220,12 +226,13 @@ export default function AdminMail({ navigate, lastSyncedAt, user, onActionSucces
   };
 
   const formatTimeAgo = (dateString) => {
-    if (!dateString) return '';
-    const diff = Math.floor((Date.now() - new Date(dateString).getTime()) / 1000);
+    const date = toAdminDate(dateString);
+    if (!date) return '';
+    const diff = Math.floor((Date.now() - date.getTime()) / 1000);
     if (diff < 60) return 'just now';
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    return new Date(dateString).toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
 
   return (
@@ -453,10 +460,10 @@ export default function AdminMail({ navigate, lastSyncedAt, user, onActionSucces
                   <div className="mail-meta-row">
                     <span className="mail-meta-label">Received:</span>
                     <span className="mail-meta-value">
-                      {new Date(selectedEmail.received_at).toLocaleString([], {
+                      {toAdminDate(selectedEmail.received_at)?.toLocaleString([], {
                         dateStyle: 'medium',
                         timeStyle: 'short',
-                      })}
+                      }) || '—'}
                     </span>
                   </div>
                 </div>

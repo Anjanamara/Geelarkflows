@@ -23,6 +23,84 @@ const localDevAuditLogs = [];
 const localDevFulfillmentLogs = [];
 const localDevInboundEmails = new Map();
 const localDevAttachments = new Map();
+const localDevCustomRequests = new Map();
+const localDevCartState = new Map();
+const localDevNotificationReceipts = new Map();
+const localDevPushSubscriptions = new Map();
+const localDevVapidPublicKey = 'BGeCvdAiPbmKQWzMxOF6Arlal71NLS5k0eraATcr-AjyEL5khb51XZ_vk5J_AT5AcYKjhDraknI6byFNstqTKE8';
+const localDevCoupons = new Map([
+  ['DEV10', {
+    id: 'cpn_dev10',
+    code: 'DEV10',
+    description: 'Local development checkout test',
+    discount_type: 'percentage',
+    discount_value: 10,
+    min_subtotal_cents: 0,
+    max_redemptions: null,
+    active: true,
+    starts_at: null,
+    expires_at: null,
+    redemption_count: 0,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }],
+]);
+const localDevNotifications = new Map([
+  ['ntf_dev_cart_offer', {
+    id: 'ntf_dev_cart_offer',
+    title: 'A saving for your cart',
+    message: 'Use DEV10 to save 10% on the workflows currently in your cart.',
+    audience_type: 'active_cart',
+    product_id: null,
+    coupon_id: 'cpn_dev10',
+    coupon_code: 'DEV10',
+    cta_label: 'Use coupon',
+    cta_url: '/checkout',
+    push_enabled: false,
+    push_sent_at: null,
+    active: true,
+    starts_at: null,
+    expires_at: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }],
+]);
+
+function resolveLocalCoupon(rawCode, workflowSubtotal) {
+  const code = String(rawCode || '').trim().toUpperCase();
+  if (!/^[A-Z0-9][A-Z0-9_-]{2,31}$/.test(code)) {
+    return { valid: false, error: 'Enter a valid coupon code.' };
+  }
+
+  const coupon = localDevCoupons.get(code);
+  const now = Date.now();
+  if (!coupon || !coupon.active) return { valid: false, error: 'This coupon is not valid.' };
+  if (coupon.starts_at && new Date(coupon.starts_at).getTime() > now) return { valid: false, error: 'This coupon is not active yet.' };
+  if (coupon.expires_at && new Date(coupon.expires_at).getTime() <= now) return { valid: false, error: 'This coupon has expired.' };
+  if (coupon.max_redemptions && coupon.redemption_count >= coupon.max_redemptions) return { valid: false, error: 'This coupon has reached its usage limit.' };
+
+  const subtotalCents = Math.round(Number(workflowSubtotal || 0) * 100);
+  if (subtotalCents < Number(coupon.min_subtotal_cents || 0)) {
+    return { valid: false, error: `This coupon requires a workflow subtotal of at least $${(coupon.min_subtotal_cents / 100).toFixed(2)} USD.` };
+  }
+
+  const rawDiscountCents = coupon.discount_type === 'percentage'
+    ? Math.round(subtotalCents * coupon.discount_value / 100)
+    : coupon.discount_value;
+  const discountCents = Math.min(subtotalCents, Math.max(0, rawDiscountCents));
+  if (discountCents <= 0) return { valid: false, error: 'This coupon does not apply to the current order.' };
+
+  return {
+    valid: true,
+    coupon,
+    code,
+    discountCents,
+    couponDiscount: discountCents / 100,
+    discountLabel: coupon.discount_type === 'percentage'
+      ? `${coupon.discount_value}% off workflows`
+      : `$${(coupon.discount_value / 100).toFixed(2)} off workflows`,
+  };
+}
 
 // Seed sample orders for realistic local dev testing if empty
 if (localDevOrders.size === 0) {
@@ -100,13 +178,55 @@ if (localDevOrders.size === 0) {
       ],
       createdAt: new Date(Date.now() - 1800000).toISOString(),
     },
+    {
+      orderId: 'ord_dev_status_mismatch',
+      paymentId: '4000000001',
+      email: 'status-check@example.test',
+      totalUsd: 1000,
+      workflowSubtotal: 1000,
+      setupFee: 0,
+      status: 'failed',
+      paymentStatus: 'waiting',
+      fulfillmentStatus: 'not_ready',
+      deliveredAt: null,
+      deliveryMethod: 'download_package',
+      network: 'trc20',
+      networkLabel: 'TRC-20',
+      blockchain: 'TRON',
+      fullNetworkLabel: 'TRC-20 / TRON',
+      currency: 'USDT (TRC-20)',
+      payCurrencyTicker: 'USDTTRC20',
+      payAmountCrypto: 998.847139,
+      payAddress: 'TXkP7mT5vR7nL2pY9wA6qK4cD8eF1gH3jB',
+      txHash: null,
+      verificationSource: 'nowpayments_api_double_verified',
+      items: [
+        { id: 'tiktok-account-creation', title: 'TikTok Account Creation', price: 1000, quantity: 1, platform: 'TikTok' },
+      ],
+      createdAt: '2026-09-02 04:08:11',
+    },
   ];
 
   seedOrders.forEach((ord) => {
     ord.statusToken = `dev_seed_status_${ord.orderId}`;
+    ord.paymentStatus = ord.paymentStatus || (['paid', 'processing', 'completed'].includes(ord.status) ? 'finished' : 'waiting');
     localDevOrders.set(ord.orderId, ord);
     if (ord.paymentId) localDevOrders.set(ord.paymentId, ord);
   });
+
+  const sampleCustomRequest = {
+    id: 'req_dev_preview',
+    customer_name: 'Dev Preview Customer',
+    customer_email: 'preview@example.test',
+    request_type: 'flow',
+    details: 'Build a custom multi-profile publishing flow with scheduling, retry handling, and a concise operator report.',
+    status: 'new',
+    internal_notification_status: 'sent',
+    internal_notification_error: null,
+    created_at: new Date(Date.now() - 5400000).toISOString(),
+    updated_at: new Date(Date.now() - 5400000).toISOString(),
+  };
+  localDevCustomRequests.set(sampleCustomRequest.id, sampleCustomRequest);
 
   const seedEmails = [
     {
@@ -225,6 +345,106 @@ export default defineConfig(({ mode }) => {
             // 1. PUBLIC CHECKOUT & STOREFRONT APIS
             // ----------------------------------------------------
 
+            // POST /api/analytics/events (accepted without persisting in local development)
+            if (req.url?.startsWith('/api/analytics/events') && req.method === 'POST') {
+              req.resume();
+              return sendJson(202, { success: true, recorded: true });
+            }
+
+            // POST /api/analytics/cart-state (minimal local state supports notification targeting)
+            if (req.url?.startsWith('/api/analytics/cart-state') && req.method === 'POST') {
+              let bodyStr = '';
+              req.on('data', chunk => { bodyStr += chunk; });
+              req.on('end', () => {
+                try {
+                  const body = JSON.parse(bodyStr || '{}');
+                  const visitorId = String(body.visitor_id || '');
+                  if (visitorId) localDevCartState.set(visitorId, Array.isArray(body.product_ids) ? body.product_ids : []);
+                  return sendJson(202, { success: true, recorded: true });
+                } catch {
+                  return sendJson(400, { success: false, error: 'Invalid cart state.' });
+                }
+              });
+              return;
+            }
+
+            // GET /api/notifications
+            if (req.url?.startsWith('/api/notifications?') && req.method === 'GET') {
+              const requestUrl = new URL(req.url, 'http://localhost');
+              const visitorId = requestUrl.searchParams.get('visitor_id') || '';
+              const cartProductIds = new Set(localDevCartState.get(visitorId) || []);
+              const items = Array.from(localDevNotifications.values()).filter((notification) => {
+                if (!notification.active) return false;
+                if (notification.audience_type === 'active_cart' && cartProductIds.size === 0) return false;
+                if (notification.audience_type === 'product_cart' && !cartProductIds.has(notification.product_id)) return false;
+                const receipt = localDevNotificationReceipts.get(`${notification.id}:${visitorId}`);
+                return !receipt?.dismissed;
+              }).map((notification) => {
+                const receipt = localDevNotificationReceipts.get(`${notification.id}:${visitorId}`);
+                return { ...notification, is_read: Boolean(receipt?.read) };
+              });
+              return sendJson(200, { success: true, notifications: items, unread_count: items.filter((item) => !item.is_read).length });
+            }
+
+            // Browser push configuration and local subscription persistence
+            if (req.url === '/api/push/config' && req.method === 'GET') {
+              return sendJson(200, { success: true, enabled: true, public_key: localDevVapidPublicKey });
+            }
+
+            if (req.url === '/api/push/subscribe' && req.method === 'POST') {
+              let bodyStr = '';
+              req.on('data', chunk => { bodyStr += chunk; });
+              req.on('end', () => {
+                try {
+                  const body = JSON.parse(bodyStr || '{}');
+                  const endpoint = String(body.subscription?.endpoint || '');
+                  if (!endpoint || !body.visitor_id) return sendJson(400, { success: false, error: 'Invalid browser push subscription.' });
+                  localDevPushSubscriptions.set(endpoint, { ...body.subscription, visitor_id: body.visitor_id, active: true });
+                  return sendJson(200, { success: true, subscribed: true });
+                } catch {
+                  return sendJson(400, { success: false, error: 'Invalid browser push subscription.' });
+                }
+              });
+              return;
+            }
+
+            if (req.url === '/api/push/unsubscribe' && req.method === 'POST') {
+              let bodyStr = '';
+              req.on('data', chunk => { bodyStr += chunk; });
+              req.on('end', () => {
+                try {
+                  const body = JSON.parse(bodyStr || '{}');
+                  localDevPushSubscriptions.delete(String(body.endpoint || ''));
+                  return sendJson(200, { success: true, subscribed: false });
+                } catch {
+                  return sendJson(400, { success: false, error: 'Invalid browser push subscription.' });
+                }
+              });
+              return;
+            }
+
+            // POST /api/notifications/:id/read or /dismiss
+            if (req.url?.match(/^\/api\/notifications\/[^/?]+\/(read|dismiss)$/) && req.method === 'POST') {
+              let bodyStr = '';
+              req.on('data', chunk => { bodyStr += chunk; });
+              req.on('end', () => {
+                try {
+                  const body = JSON.parse(bodyStr || '{}');
+                  const parts = req.url.split('/');
+                  const notificationId = parts[3];
+                  const action = parts[4];
+                  const key = `${notificationId}:${body.visitor_id || ''}`;
+                  const receipt = localDevNotificationReceipts.get(key) || {};
+                  receipt[action === 'read' ? 'read' : 'dismissed'] = true;
+                  localDevNotificationReceipts.set(key, receipt);
+                  return sendJson(200, { success: true, id: notificationId });
+                } catch {
+                  return sendJson(400, { success: false, error: 'Invalid notification receipt.' });
+                }
+              });
+              return;
+            }
+
             // POST /api/custom-request
             if (req.url?.startsWith('/api/custom-request') && req.method === 'POST') {
               let bodyStr = '';
@@ -265,6 +485,54 @@ export default defineConfig(({ mode }) => {
               return;
             }
 
+            // POST /api/coupons/validate
+            if (req.url?.startsWith('/api/coupons/validate') && req.method === 'POST') {
+              let bodyStr = '';
+              req.on('data', chunk => { bodyStr += chunk; });
+              req.on('end', () => {
+                try {
+                  const body = JSON.parse(bodyStr || '{}');
+                  const cart = Array.isArray(body.cart) ? body.cart : [];
+                  if (!cart.length || cart.length > 50) {
+                    return sendJson(400, { success: false, error: 'Add at least one workflow before applying a coupon.' });
+                  }
+
+                  let workflowSubtotal = 0;
+                  for (let i = 0; i < cart.length; i++) {
+                    const catalogItem = devCatalogMap.get(String(cart[i]?.id || '').trim());
+                    const quantity = Number(cart[i]?.quantity ?? 1);
+                    if (!catalogItem || !Number.isInteger(quantity) || quantity < 1 || quantity > 100) {
+                      return sendJson(400, { success: false, error: 'The cart contains an invalid workflow or quantity.' });
+                    }
+                    workflowSubtotal += catalogItem.price * quantity;
+                  }
+
+                  const coupon = resolveLocalCoupon(body.coupon_code || body.couponCode, workflowSubtotal);
+                  if (!coupon.valid) return sendJson(400, { success: false, error: coupon.error });
+
+                  const deliveryMethod = body.delivery_method || body.deliveryMethod || 'download_package';
+                  const setupFee = deliveryMethod === 'geelark_setup' && workflowSubtotal < 300 ? 50 : 0;
+                  return sendJson(200, {
+                    success: true,
+                    data: {
+                      code: coupon.code,
+                      description: coupon.coupon.description,
+                      discountType: coupon.coupon.discount_type,
+                      discountValue: coupon.coupon.discount_value,
+                      discountLabel: coupon.discountLabel,
+                      workflowSubtotal,
+                      setupFee,
+                      couponDiscount: coupon.couponDiscount,
+                      totalUsd: workflowSubtotal + setupFee - coupon.couponDiscount,
+                    },
+                  });
+                } catch (err) {
+                  return sendJson(400, { success: false, error: 'Invalid coupon request.' });
+                }
+              });
+              return;
+            }
+
             // POST /api/checkout/create
             if (req.url?.startsWith('/api/checkout/create') && req.method === 'POST') {
               let bodyStr = '';
@@ -272,7 +540,7 @@ export default defineConfig(({ mode }) => {
               req.on('end', async () => {
                 try {
                   const body = JSON.parse(bodyStr || '{}');
-                  const { email, network, payment_network, delivery_method, cart = [] } = body;
+                  const { email, network, payment_network, delivery_method, coupon_code, couponCode, cart = [] } = body;
 
                   const cleanEmail = String(email || '').trim().toLowerCase();
                   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail) || cleanEmail.length > 254 || !Array.isArray(cart) || cart.length === 0) {
@@ -329,7 +597,13 @@ export default defineConfig(({ mode }) => {
                   const statusToken = crypto.randomBytes(32).toString('hex');
                   const workflowSubtotal = resolvedCart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
                   const setupFee = deliveryMethod === 'geelark_setup' ? (workflowSubtotal >= 300 ? 0 : 50) : 0;
-                  const totalUsd = workflowSubtotal + setupFee;
+                  const suppliedCouponCode = coupon_code || couponCode;
+                  const appliedCoupon = suppliedCouponCode ? resolveLocalCoupon(suppliedCouponCode, workflowSubtotal) : null;
+                  if (appliedCoupon && !appliedCoupon.valid) {
+                    return sendJson(400, { success: false, error: appliedCoupon.error });
+                  }
+                  const couponDiscount = appliedCoupon?.couponDiscount || 0;
+                  const totalUsd = workflowSubtotal + setupFee - couponDiscount;
 
                   if (totalUsd < netConfig.min_amount_usd) {
                     return sendJson(400, {
@@ -410,13 +684,17 @@ export default defineConfig(({ mode }) => {
                     deliveryMethod,
                     workflowSubtotal,
                     setupFee,
+                    couponCode: appliedCoupon?.code || null,
+                    couponDiscount,
+                    couponLabel: appliedCoupon?.discountLabel || null,
                     totalUsd,
                     payAmountCrypto,
                     payAddress,
                     addressVerified: false,
                     verificationSource: livePaymentMockEnabled ? 'local_live_unverified' : 'local_development_mock',
                     expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-                    status: 'waiting',
+                    status: 'awaiting_payment',
+                    paymentStatus: 'waiting',
                     fulfillmentStatus: 'not_ready',
                     items: resolvedCart,
                     createdAt: new Date().toISOString(),
@@ -425,6 +703,7 @@ export default defineConfig(({ mode }) => {
 
                   localDevOrders.set(orderId, orderRecord);
                   localDevOrders.set(paymentId, orderRecord);
+                  if (appliedCoupon) appliedCoupon.coupon.redemption_count += 1;
 
                   return sendJson(200, { success: true, data: orderRecord });
                 } catch (err) {
@@ -465,10 +744,16 @@ export default defineConfig(({ mode }) => {
 
                   if (orderId && localDevOrders.has(orderId)) {
                     const record = localDevOrders.get(orderId);
-                    record.status = paymentStatus;
+                    record.paymentStatus = paymentStatus;
                     record.txHash = payload.outcome_tx_hash || payload.txid || '0x' + Math.random().toString(16).substring(2);
                     if (['confirmed', 'finished', 'paid'].includes(paymentStatus.toLowerCase())) {
+                      if (!['processing', 'completed', 'refunded'].includes(record.status)) record.status = 'paid';
                       record.fulfillmentStatus = record.deliveryMethod === 'geelark_setup' ? 'setup_pending' : 'fulfillment_pending';
+                    } else if (['failed', 'expired'].includes(paymentStatus.toLowerCase()) && ['pending', 'awaiting_payment'].includes(record.status)) {
+                      record.status = 'failed';
+                    } else if (['waiting', 'confirming', 'sending', 'partially_paid'].includes(paymentStatus.toLowerCase()) && record.status === 'failed') {
+                      record.status = 'awaiting_payment';
+                      record.fulfillmentStatus = 'not_ready';
                     }
                     localDevOrders.set(orderId, record);
                     if (record.paymentId) localDevOrders.set(record.paymentId, record);
@@ -491,7 +776,7 @@ export default defineConfig(({ mode }) => {
               }
 
               res.setHeader('Cache-Control', 'no-store, private');
-              const currentStatus = record.status || 'waiting';
+              const currentStatus = record.paymentStatus || 'waiting';
               const isConfirmed = ['confirmed', 'finished', 'paid'].includes(currentStatus.toLowerCase());
 
               return sendJson(200, {
@@ -501,7 +786,7 @@ export default defineConfig(({ mode }) => {
                   orderId: record?.orderId || id,
                   paymentId: record?.paymentId || id,
                   status: currentStatus,
-                  orderStatus: isConfirmed ? 'paid' : (record.status || 'awaiting_payment'),
+                  orderStatus: record.status || (isConfirmed ? 'paid' : 'awaiting_payment'),
                   isConfirmed,
                   txHash: record?.txHash || null,
                   asset: 'USDT',
@@ -514,6 +799,8 @@ export default defineConfig(({ mode }) => {
                   deliveryMethod: record.deliveryMethod || 'download_package',
                   workflowSubtotal: record.workflowSubtotal || record.totalUsd || 0,
                   setupFee: record.setupFee || 0,
+                  couponCode: record.couponCode || null,
+                  couponDiscount: record.couponDiscount || 0,
                   totalUsd: record.totalUsd || 0,
                   payAmount: record.payAmountCrypto || record.totalUsd || 0,
                   payAddress: record.payAddress || '',
@@ -715,11 +1002,14 @@ export default defineConfig(({ mode }) => {
 
                 const countPending = allOrders.filter(o => o.status === 'pending').length;
                 const countAwaiting = allOrders.filter(o => o.status === 'awaiting_payment').length;
-                const countVerifying = allOrders.filter(o => o.status === 'waiting' || o.status === 'confirming').length;
+                const countVerifying = allOrders.filter(o => ['confirming', 'sending'].includes(o.paymentStatus)).length;
                 const countPaid = allOrders.filter(o => o.status === 'paid').length;
                 const countProcessing = allOrders.filter(o => o.status === 'processing').length;
                 const countCompleted = allOrders.filter(o => o.status === 'completed').length;
-                const countFulfillmentPending = allOrders.filter(o => ['paid', 'processing'].includes(o.status) && o.fulfillmentStatus !== 'delivered').length;
+                const countFulfillmentPending = allOrders.filter(o => (
+                  ['paid', 'processing'].includes(o.status)
+                  && !['package_delivered', 'setup_completed'].includes(o.fulfillmentStatus)
+                )).length;
 
                 return sendJson(200, {
                   success: true,
@@ -746,10 +1036,243 @@ export default defineConfig(({ mode }) => {
                       { currency: 'USDT (TRC-20)', tx_count: allOrders.filter(o => o.network === 'trc20').length, total_volume: 1400 },
                       { currency: 'USDT (BEP-20)', tx_count: allOrders.filter(o => o.network === 'bep20').length, total_volume: 1250 },
                     ],
-                    recent_orders: allOrders.slice(0, 10),
+                    recent_orders: allOrders.slice(0, 10).map((order) => ({
+                      id: order.orderId,
+                      created_at: order.createdAt,
+                      customer_email: order.email,
+                      total_usd: order.totalUsd,
+                      payment_currency: order.currency,
+                      status: order.status,
+                      fulfillment_status: order.fulfillmentStatus || 'not_ready',
+                    })),
                     synced_at: new Date().toISOString(),
                   },
                 });
+              }
+
+              // GET /api/admin/analytics
+              if (req.url.startsWith('/api/admin/analytics') && req.method === 'GET') {
+                const now = new Date();
+                const day = (offset) => new Date(now.getTime() - offset * 86400000).toISOString().slice(0, 10);
+                return sendJson(200, {
+                  success: true,
+                  data: {
+                    range_days: 30,
+                    metrics: {
+                      unique_visitors: 184,
+                      page_views: 493,
+                      cart_visitors: 37,
+                      cart_additions: 52,
+                      active_carts: 12,
+                      cart_visitor_rate: 20.1,
+                    },
+                    daily: [
+                      { day: day(6), unique_visitors: 19, page_views: 48, cart_additions: 4 },
+                      { day: day(5), unique_visitors: 23, page_views: 61, cart_additions: 7 },
+                      { day: day(4), unique_visitors: 27, page_views: 70, cart_additions: 8 },
+                      { day: day(3), unique_visitors: 22, page_views: 59, cart_additions: 5 },
+                      { day: day(2), unique_visitors: 31, page_views: 83, cart_additions: 9 },
+                      { day: day(1), unique_visitors: 35, page_views: 91, cart_additions: 11 },
+                      { day: day(0), unique_visitors: 27, page_views: 81, cart_additions: 8 },
+                    ],
+                    popular_flows: [
+                      { product_id: 'instagram-account-creation', title: 'Instagram Account Creation', cart_additions: 18, unique_visitors: 15, share: 34.6 },
+                      { product_id: 'tiktok-warmup', title: 'TikTok Warmup', cart_additions: 13, unique_visitors: 11, share: 25 },
+                      { product_id: 'youtube-publishing', title: 'YouTube Publishing', cart_additions: 9, unique_visitors: 8, share: 17.3 },
+                    ],
+                    traffic_sources: [
+                      { referrer_host: 'bing.com', sessions: 58, unique_visitors: 49, page_views: 132, cart_visitors: 13, cart_additions: 18 },
+                      { referrer_host: 'google.com', sessions: 46, unique_visitors: 41, page_views: 119, cart_visitors: 11, cart_additions: 15 },
+                      { referrer_host: 'Direct', sessions: 39, unique_visitors: 35, page_views: 101, cart_visitors: 8, cart_additions: 12 },
+                      { referrer_host: 'Internal', sessions: 17, unique_visitors: 15, page_views: 41, cart_visitors: 5, cart_additions: 7 },
+                    ],
+                    locations: [
+                      { country_code: 'IN', region: 'Telangana', city: 'Hyderabad', unique_visitors: 61, cart_visitors: 15, cart_additions: 22, cart_visitor_rate: 24.6 },
+                      { country_code: 'US', region: 'California', city: 'San Francisco', unique_visitors: 38, cart_visitors: 9, cart_additions: 12, cart_visitor_rate: 23.7 },
+                    ],
+                    active_carts: [
+                      { visitor_id: 'a4e92c0d71f8', item_count: 2, cart_value_usd: 1250, items: [{ product_id: 'instagram-account-creation', title: 'Instagram Account Creation' }, { product_id: 'instagram-warmup', title: 'Instagram Warmup' }], page_path: '/cart', referrer_host: 'google.com', ip_network: '203.0.113.0/24', country_code: 'IN', region: 'Telangana', city: 'Hyderabad', device_type: 'Desktop', browser_family: 'Chrome', os_family: 'Windows', updated_at: now.toISOString().replace('T', ' ').slice(0, 19) },
+                      { visitor_id: '91bc73d0842a', item_count: 1, cart_value_usd: 250, items: [{ product_id: 'tiktok-warmup', title: 'TikTok Warmup' }], page_path: '/cart', referrer_host: null, ip_network: '2001:db8:42::/48', country_code: 'US', region: 'California', city: 'San Francisco', device_type: 'Mobile', browser_family: 'Safari', os_family: 'iOS', updated_at: new Date(now.getTime() - 3600000).toISOString().replace('T', ' ').slice(0, 19) },
+                    ],
+                    recent_cart_additions: [
+                      { visitor_id: 'a4e92c0d71f8', product_id: 'instagram-account-creation', title: 'Instagram Account Creation', page_path: '/flows/instagram-account-creation', referrer_host: 'google.com', ip_network: '203.0.113.0/24', country_code: 'IN', region: 'Telangana', city: 'Hyderabad', device_type: 'Desktop', browser_family: 'Chrome', os_family: 'Windows', created_at: now.toISOString().replace('T', ' ').slice(0, 19) },
+                      { visitor_id: '91bc73d0842a', product_id: 'tiktok-warmup', title: 'TikTok Warmup', page_path: '/', referrer_host: 'Direct', ip_network: '2001:db8:42::/48', country_code: 'US', region: 'California', city: 'San Francisco', device_type: 'Mobile', browser_family: 'Safari', os_family: 'iOS', created_at: new Date(now.getTime() - 3600000).toISOString().replace('T', ' ').slice(0, 19) },
+                    ],
+                    retention_days: 90,
+                    synced_at: now.toISOString(),
+                  },
+                });
+              }
+
+              // GET /api/admin/coupons
+              if (req.url.startsWith('/api/admin/coupons') && req.method === 'GET') {
+                const coupons = Array.from(localDevCoupons.values())
+                  .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+                  .map((coupon) => ({
+                    ...coupon,
+                    discount_value_display: coupon.discount_type === 'percentage'
+                      ? `${coupon.discount_value}%`
+                      : `$${(coupon.discount_value / 100).toFixed(2)}`,
+                    min_subtotal_usd: coupon.min_subtotal_cents / 100,
+                  }));
+                return sendJson(200, { success: true, coupons });
+              }
+
+              // POST /api/admin/coupons
+              if (req.url === '/api/admin/coupons' && req.method === 'POST') {
+                let bodyStr = '';
+                req.on('data', chunk => { bodyStr += chunk; });
+                req.on('end', () => {
+                  try {
+                    const body = JSON.parse(bodyStr || '{}');
+                    const code = String(body.code || '').trim().toUpperCase();
+                    const discountType = body.discount_type;
+                    const inputValue = Number(body.discount_value);
+                    if (!/^[A-Z0-9][A-Z0-9_-]{2,31}$/.test(code)) return sendJson(400, { success: false, error: 'Coupon codes must be 3–32 letters, numbers, underscores, or hyphens.' });
+                    if (localDevCoupons.has(code)) return sendJson(409, { success: false, error: 'A coupon with this code already exists.' });
+                    if (!['percentage', 'fixed_amount'].includes(discountType) || !Number.isFinite(inputValue) || inputValue <= 0) return sendJson(400, { success: false, error: 'Enter a valid discount.' });
+                    if (discountType === 'percentage' && (!Number.isInteger(inputValue) || inputValue > 100)) return sendJson(400, { success: false, error: 'Percentage discounts must be a whole number from 1 to 100.' });
+
+                    const now = new Date().toISOString();
+                    const coupon = {
+                      id: 'cpn_' + crypto.randomBytes(8).toString('hex'),
+                      code,
+                      description: String(body.description || '').trim() || null,
+                      discount_type: discountType,
+                      discount_value: discountType === 'percentage' ? inputValue : Math.round(inputValue * 100),
+                      min_subtotal_cents: Math.max(0, Math.round(Number(body.min_subtotal_usd || 0) * 100)),
+                      max_redemptions: body.max_redemptions ? Number(body.max_redemptions) : null,
+                      active: body.active !== false,
+                      starts_at: body.starts_at || null,
+                      expires_at: body.expires_at || null,
+                      redemption_count: 0,
+                      created_at: now,
+                      updated_at: now,
+                    };
+                    localDevCoupons.set(code, coupon);
+                    return sendJson(201, { success: true, message: `Coupon ${code} created.`, id: coupon.id, code });
+                  } catch (err) {
+                    return sendJson(400, { success: false, error: 'Invalid coupon request.' });
+                  }
+                });
+                return;
+              }
+
+              // PATCH /api/admin/coupons/:id
+              if (req.url.match(/\/api\/admin\/coupons\/[^/?]+$/) && req.method === 'PATCH') {
+                const couponId = decodeURIComponent(req.url.split('/api/admin/coupons/')[1].split('?')[0]);
+                const coupon = Array.from(localDevCoupons.values()).find((item) => item.id === couponId);
+                if (!coupon) return sendJson(404, { success: false, error: 'Coupon not found.' });
+                let bodyStr = '';
+                req.on('data', chunk => { bodyStr += chunk; });
+                req.on('end', () => {
+                  const body = JSON.parse(bodyStr || '{}');
+                  if (typeof body.active !== 'boolean') return sendJson(400, { success: false, error: 'The active flag must be boolean.' });
+                  coupon.active = body.active;
+                  coupon.updated_at = new Date().toISOString();
+                  return sendJson(200, { success: true, id: coupon.id, code: coupon.code, active: coupon.active });
+                });
+                return;
+              }
+
+              // GET /api/admin/notifications
+              if (req.url.startsWith('/api/admin/notifications') && req.method === 'GET') {
+                const notifications = Array.from(localDevNotifications.values())
+                  .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+                  .map((notification) => {
+                    const receipts = Array.from(localDevNotificationReceipts.entries())
+                      .filter(([key]) => key.startsWith(`${notification.id}:`))
+                      .map(([, receipt]) => receipt);
+                    return {
+                      ...notification,
+                      push_enabled: Boolean(notification.push_enabled),
+                      push_sent_count: Number(notification.push_sent_count || 0),
+                      push_failed_count: Number(notification.push_failed_count || 0),
+                      push_gone_count: Number(notification.push_gone_count || 0),
+                      delivered_count: receipts.length,
+                      read_count: receipts.filter((receipt) => receipt.read).length,
+                      dismissed_count: receipts.filter((receipt) => receipt.dismissed).length,
+                    };
+                  });
+                return sendJson(200, {
+                  success: true,
+                  push_configured: true,
+                  active_push_subscribers: localDevPushSubscriptions.size,
+                  notifications,
+                });
+              }
+
+              // POST /api/admin/notifications
+              if (req.url === '/api/admin/notifications' && req.method === 'POST') {
+                let bodyStr = '';
+                req.on('data', chunk => { bodyStr += chunk; });
+                req.on('end', () => {
+                  try {
+                    const body = JSON.parse(bodyStr || '{}');
+                    const title = String(body.title || '').trim();
+                    const message = String(body.message || '').trim();
+                    if (title.length < 3 || message.length < 5) return sendJson(400, { success: false, error: 'Enter a title and message.' });
+                    if (!['all', 'active_cart', 'product_cart'].includes(body.audience_type)) return sendJson(400, { success: false, error: 'Choose a valid audience.' });
+                    if (body.audience_type === 'product_cart' && !devCatalogMap.has(body.product_id)) return sendJson(400, { success: false, error: 'Choose a valid flow.' });
+                    if (!/^\/(?!\/)/.test(String(body.cta_url || '/'))) return sendJson(400, { success: false, error: 'CTA URL must be an internal path.' });
+                    const coupon = body.coupon_id
+                      ? Array.from(localDevCoupons.values()).find((item) => item.id === body.coupon_id)
+                      : null;
+                    if (body.coupon_id && !coupon) return sendJson(400, { success: false, error: 'Selected coupon was not found.' });
+                    const now = new Date().toISOString();
+                    const notification = {
+                      id: 'ntf_' + crypto.randomBytes(8).toString('hex'),
+                      title,
+                      message,
+                      audience_type: body.audience_type,
+                      product_id: body.audience_type === 'product_cart' ? body.product_id : null,
+                      coupon_id: coupon?.id || null,
+                      coupon_code: coupon?.code || null,
+                      cta_label: String(body.cta_label || '').trim() || null,
+                      cta_url: String(body.cta_url || '/'),
+                      push_enabled: body.push_enabled === true,
+                      push_sent_at: body.push_enabled === true ? now : null,
+                      active: body.active !== false,
+                      starts_at: body.starts_at || null,
+                      expires_at: body.expires_at || null,
+                      created_at: now,
+                      updated_at: now,
+                      delivered_count: 0,
+                      read_count: 0,
+                      dismissed_count: 0,
+                      push_sent_count: body.push_enabled === true ? localDevPushSubscriptions.size : 0,
+                      push_failed_count: 0,
+                      push_gone_count: 0,
+                    };
+                    localDevNotifications.set(notification.id, notification);
+                    return sendJson(201, {
+                      success: true,
+                      id: notification.id,
+                      message: `In-site notification campaign created.${body.push_enabled === true ? ` Browser push: ${localDevPushSubscriptions.size} sent, 0 failed or expired.` : ''}`,
+                      push: { sent: body.push_enabled === true ? localDevPushSubscriptions.size : 0, failed: 0, gone: 0, skipped: 0 },
+                    });
+                  } catch {
+                    return sendJson(400, { success: false, error: 'Invalid notification request.' });
+                  }
+                });
+                return;
+              }
+
+              // PATCH /api/admin/notifications/:id
+              if (req.url.match(/\/api\/admin\/notifications\/[^/?]+$/) && req.method === 'PATCH') {
+                const notificationId = decodeURIComponent(req.url.split('/api/admin/notifications/')[1].split('?')[0]);
+                const notification = localDevNotifications.get(notificationId);
+                if (!notification) return sendJson(404, { success: false, error: 'Notification campaign not found.' });
+                let bodyStr = '';
+                req.on('data', chunk => { bodyStr += chunk; });
+                req.on('end', () => {
+                  const body = JSON.parse(bodyStr || '{}');
+                  if (typeof body.active !== 'boolean') return sendJson(400, { success: false, error: 'The active flag must be boolean.' });
+                  notification.active = body.active;
+                  notification.updated_at = new Date().toISOString();
+                  return sendJson(200, { success: true, id: notification.id, active: notification.active });
+                });
+                return;
               }
 
               // GET /api/admin/orders
@@ -763,6 +1286,8 @@ export default defineConfig(({ mode }) => {
                     delivery_method: o.deliveryMethod || 'download_package',
                     workflow_subtotal: o.workflowSubtotal || o.totalUsd || 0,
                     setup_fee: o.setupFee || 0,
+                    coupon_code: o.couponCode || null,
+                    coupon_discount_usd: o.couponDiscount || 0,
                     total_usd: o.totalUsd,
                     status: o.status,
                     items: JSON.stringify(o.items || []),
@@ -770,7 +1295,7 @@ export default defineConfig(({ mode }) => {
                     created_at: o.createdAt,
                     payment_id: o.paymentId,
                     payment_currency: o.currency,
-                    payment_status: o.status,
+                    payment_status: o.paymentStatus || 'waiting',
                     pay_amount_crypto: o.payAmountCrypto,
                     tx_hash: o.txHash,
                     itemsCount: (o.items || []).length,
@@ -794,6 +1319,8 @@ export default defineConfig(({ mode }) => {
                     delivery_method: order.deliveryMethod || 'download_package',
                     workflow_subtotal: order.workflowSubtotal || order.totalUsd || 0,
                     setup_fee: order.setupFee || 0,
+                    coupon_code: order.couponCode || null,
+                    coupon_discount_usd: order.couponDiscount || 0,
                     total_usd: order.totalUsd,
                     status: order.status,
                     fulfillment_status: order.fulfillmentStatus || 'not_ready',
@@ -808,8 +1335,9 @@ export default defineConfig(({ mode }) => {
                     pay_address: order.payAddress,
                     pay_amount_crypto: order.payAmountCrypto,
                     tx_hash: order.txHash,
-                    status: order.status,
+                    status: order.paymentStatus || 'waiting',
                     verification_source: order.verificationSource || 'nowpayments_ipn',
+                    created_at: order.createdAt,
                     explorerUrl: order.txHash ? `https://tronscan.org/#/transaction/${order.txHash}` : null,
                   },
                   fulfillment_logs: localDevFulfillmentLogs.filter(f => f.order_id === orderId),
@@ -826,6 +1354,11 @@ export default defineConfig(({ mode }) => {
                   const body = JSON.parse(bodyStr || '{}');
                   const order = localDevOrders.get(orderId);
                   if (!order) return sendJson(404, { success: false, error: 'Order not found' });
+
+                  const confirmedPayment = ['confirmed', 'finished', 'paid'].includes(String(order.paymentStatus || '').toLowerCase());
+                  if (!['paid', 'processing', 'completed'].includes(order.status) || !confirmedPayment) {
+                    return sendJson(409, { success: false, error: 'Fulfillment is locked until both order and payment records confirm settlement.' });
+                  }
 
                   const prev = order.fulfillmentStatus;
                   order.fulfillmentStatus = body.target_status;
@@ -858,6 +1391,19 @@ export default defineConfig(({ mode }) => {
                   if (!order) return sendJson(404, { success: false, error: 'Order not found' });
 
                   const prev = order.status;
+                  const allowedTransitions = {
+                    pending: ['awaiting_payment', 'cancelled'],
+                    awaiting_payment: ['cancelled'],
+                    paid: ['processing', 'refunded'],
+                    processing: ['completed', 'refunded'],
+                    completed: ['refunded'],
+                    cancelled: [],
+                    refunded: [],
+                    failed: [],
+                  };
+                  if (!(allowedTransitions[prev] || []).includes(body.target_status)) {
+                    return sendJson(400, { success: false, error: `Invalid transition from ${prev} to ${body.target_status}.` });
+                  }
                   order.status = body.target_status;
                   localDevOrders.set(orderId, order);
 
@@ -911,6 +1457,7 @@ export default defineConfig(({ mode }) => {
 
                   const prev = order.status;
                   order.status = 'paid';
+                  order.paymentStatus = 'confirmed';
                   order.txHash = body.tx_hash || 'MANUAL_VERIFIED_BY_' + user.email;
                   order.verificationSource = 'manual_admin';
                   localDevOrders.set(order.orderId, order);
@@ -946,7 +1493,7 @@ export default defineConfig(({ mode }) => {
                     delivered_at: o.deliveredAt || null,
                     created_at: o.createdAt,
                     payment_currency: o.currency,
-                    payment_status: o.status,
+                    payment_status: o.paymentStatus || 'waiting',
                     attempt_count: 1,
                   })),
                 });
@@ -999,6 +1546,46 @@ export default defineConfig(({ mode }) => {
                   success: true,
                   workflows: derivedWorkflows,
                 });
+              }
+
+              // GET /api/admin/custom-requests
+              if (req.url.startsWith('/api/admin/custom-requests') && req.method === 'GET') {
+                const urlObj = new URL(req.url, 'http://localhost');
+                const status = urlObj.searchParams.get('status') || 'all';
+                const page = Math.max(1, Number(urlObj.searchParams.get('page')) || 1);
+                const limit = Math.max(1, Number(urlObj.searchParams.get('limit')) || 50);
+                const requests = Array.from(localDevCustomRequests.values())
+                  .filter((item) => status === 'all' || item.status === status)
+                  .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+
+                return sendJson(200, {
+                  success: true,
+                  data: requests.slice((page - 1) * limit, page * limit),
+                  pagination: { page, limit, total: requests.length },
+                });
+              }
+
+              // PATCH /api/admin/custom-requests/:id
+              if (req.url.match(/\/api\/admin\/custom-requests\/[^/?]+$/) && req.method === 'PATCH') {
+                const requestId = req.url.split('/api/admin/custom-requests/')[1].split('?')[0];
+                const customRequest = localDevCustomRequests.get(requestId);
+                if (!customRequest) return sendJson(404, { success: false, error: 'Custom automation request not found' });
+
+                let bodyStr = '';
+                req.on('data', chunk => { bodyStr += chunk; });
+                req.on('end', () => {
+                  const body = JSON.parse(bodyStr || '{}');
+                  const validStatuses = ['new', 'in_review', 'contacted', 'closed'];
+                  if (!validStatuses.includes(body.status)) {
+                    return sendJson(400, { success: false, error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
+                  }
+
+                  customRequest.status = body.status;
+                  customRequest.updated_at = new Date().toISOString();
+                  localDevCustomRequests.set(requestId, customRequest);
+                  return sendJson(200, { success: true, message: 'Status updated successfully', id: requestId, status: body.status });
+                });
+                return;
               }
 
               // GET /api/admin/customers

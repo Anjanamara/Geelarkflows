@@ -1,4 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { formatAdminDateTime } from '../dateUtils';
+import { redirectIfUnauthorized } from '../apiUtils';
 
 export default function AdminCustomRequests({ navigate, lastSyncedAt, user }) {
   const [requests, setRequests] = useState([]);
@@ -80,6 +82,7 @@ export default function AdminCustomRequests({ navigate, lastSyncedAt, user }) {
         body: JSON.stringify({ status: newStatus }),
       });
 
+      if (redirectIfUnauthorized(res)) return;
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to update request status.');
@@ -286,7 +289,7 @@ export default function AdminCustomRequests({ navigate, lastSyncedAt, user }) {
                     <td>{getStatusBadge(req.status)}</td>
                     <td>{getNotificationBadge(req.internal_notification_status)}</td>
                     <td style={{ fontSize: '11.5px', color: 'var(--admin-text-muted)' }}>
-                      {req.created_at ? new Date(req.created_at).toLocaleString() : '—'}
+                      {formatAdminDateTime(req.created_at)}
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <button
@@ -308,12 +311,22 @@ export default function AdminCustomRequests({ navigate, lastSyncedAt, user }) {
 
       {/* Detail Modal Dialog */}
       {selectedRequest && (
-        <>
-          <div className="admin-modal-overlay" onClick={closeDetail} />
-          <div className="admin-modal" style={{ maxWidth: '640px' }}>
+        <div className="admin-modal-overlay" onClick={closeDetail}>
+          <div
+            className="admin-modal-card"
+            style={{ maxWidth: '640px' }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="custom-request-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className="admin-modal-header">
               <div>
-                <h2 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--admin-text-main)' }}>
+                <h2
+                  id="custom-request-modal-title"
+                  className="admin-modal-title"
+                  style={{ fontSize: '16px' }}
+                >
                   Custom Request Details
                 </h2>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
@@ -321,15 +334,15 @@ export default function AdminCustomRequests({ navigate, lastSyncedAt, user }) {
                     {selectedRequest.id}
                   </span>
                   <span style={{ color: 'var(--admin-text-muted)', fontSize: '11.5px' }}>
-                    Submitted {selectedRequest.created_at ? new Date(selectedRequest.created_at).toLocaleString() : ''}
+                    Submitted {formatAdminDateTime(selectedRequest.created_at, '')}
                   </span>
                 </div>
               </div>
               <button
                 type="button"
-                className="btn-admin-secondary"
-                style={{ padding: '4px 8px', lineHeight: 1 }}
+                className="admin-modal-close"
                 onClick={closeDetail}
+                aria-label="Close custom request details"
               >
                 ✕
               </button>
@@ -486,7 +499,7 @@ export default function AdminCustomRequests({ navigate, lastSyncedAt, user }) {
               </button>
             </div>
           </div>
-        </>
+        </div>
       )}
     </div>
   );

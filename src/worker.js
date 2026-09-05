@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { buildPushPayload } from '@block65/webcrypto-web-push';
 import { products } from './data/products.js';
 import { DEFAULT_NETWORK_ID, USDT_NETWORKS, getNetworkConfig } from './data/paymentConfig.js';
 
@@ -28,8 +29,19 @@ function resolvePaymentNetwork(networkInput) {
 // SECURITY & CRYPTO HELPERS (WebCrypto Native)
 // ----------------------------------------------------
 
-const PBKDF2_ITERATIONS = 600000;
+// Cloudflare Workers rejects PBKDF2 iteration counts above 100,000.
+// Keep generated hashes within that runtime limit so bootstrap and login use
+// the same portable format documented in schema.sql.
+const PBKDF2_ITERATIONS = 100000;
+const PBKDF2_MAX_ITERATIONS = 100000;
 const HASH_ALGO_PREFIX = 'pbkdf2_sha256';
+
+class UnsupportedPasswordHashError extends Error {
+  constructor() {
+    super('Stored password hash exceeds this runtime\'s PBKDF2 limit.');
+    this.name = 'UnsupportedPasswordHashError';
+  }
+}
 
 function uint8ArrayToHex(buffer) {
   return Array.from(buffer).map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -47,6 +59,181 @@ async function sha256Hex(str) {
   const encoder = new TextEncoder();
   const buf = await crypto.subtle.digest('SHA-256', encoder.encode(str));
   return uint8ArrayToHex(new Uint8Array(buf));
+}
+
+async function hmacSha256Hex(secret, value) {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(value));
+  return uint8ArrayToHex(new Uint8Array(signature));
+}
+
+function maskIpNetwork(value) {
+  const ip = String(value || '').split(',')[0].trim();
+  const ipv4 = ip.split('.');
+  if (ipv4.length === 4 && ipv4.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)) {
+    return `${ipv4[0]}.${ipv4[1]}.${ipv4[2]}.0/24`;
+  }
+
+  if (ip.includes(':')) {
+    const groups = ip.split(':').filter(Boolean).slice(0, 3);
+    if (groups.length >= 2 && groups.every((part) => /^[a-f0-9]{1,4}$/i.test(part))) {
+      return `${groups.join(':')}::/48`;
+    }
+  }
+  return null;
+}
+
+function classifyUserAgent(value) {
+  const userAgent = String(value || '').slice(0, 500);
+  const isBot = /bot|crawler|spider|slurp|headless/i.test(userAgent);
+  const deviceType = isBot
+    ? 'Bot'
+    : /ipad|tablet|kindle/i.test(userAgent)
+      ? 'Tablet'
+      : /mobile|iphone|android/i.test(userAgent)
+        ? 'Mobile'
+        : 'Desktop';
+
+  const browserFamily = /edg\//i.test(userAgent)
+    ? 'Edge'
+    : /opr\//i.test(userAgent)
+      ? 'Opera'
+      : /samsungbrowser/i.test(userAgent)
+        ? 'Samsung Internet'
+        : /firefox|fxios/i.test(userAgent)
+          ? 'Firefox'
+          : /chrome|crios/i.test(userAgent)
+            ? 'Chrome'
+            : /safari/i.test(userAgent)
+              ? 'Safari'
+              : 'Other';
+
+  const osFamily = /windows/i.test(userAgent)
+    ? 'Windows'
+    : /iphone|ipad|ios/i.test(userAgent)
+      ? 'iOS'
+      : /android/i.test(userAgent)
+        ? 'Android'
+        : /mac os|macintosh/i.test(userAgent)
+          ? 'macOS'
+          : /linux/i.test(userAgent)
+            ? 'Linux'
+            : 'Other';
+
+  return { deviceType, browserFamily, osFamily };
+}
+
+function normalizeAnalyticsPath(value) {
+  const path = String(value || '').split('?')[0].slice(0, 200);
+  return path.startsWith('/') && !/[\u0000-\u001f]/.test(path) ? path : '/';
+}
+
+function validStorefrontClientId(value) {
+  return /^[a-zA-Z0-9_-]{16,80}$/.test(String(value || ''));
+}
+
+function normalizeInternalCtaUrl(value, fallback = '/') {
+  const url = String(value || '').trim().slice(0, 200);
+  if (!url) return fallback;
+  return /^\/(?!\/)[^\u0000-\u001f]*$/.test(url) ? url : null;
+}
+
+const TRUSTED_WEB_PUSH_HOSTS = [
+  'fcm.googleapis.com',
+  'push.services.mozilla.com',
+  'web.push.apple.com',
+];
+
+function isTrustedWebPushEndpoint(endpoint) {
+  try {
+    const url = new URL(String(endpoint || ''));
+    if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443')) return false;
+    const hostname = url.hostname.toLowerCase();
+    return TRUSTED_WEB_PUSH_HOSTS.includes(hostname)
+      || hostname.endsWith('.push.services.mozilla.com')
+      || hostname.endsWith('.push.apple.com')
+      || hostname.endsWith('.notify.windows.com');
+  } catch {
+    return false;
+  }
+}
+
+function normalizeWebPushSubscription(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const endpoint = String(value.endpoint || '').trim();
+  const p256dh = String(value.keys?.p256dh || '').trim();
+  const auth = String(value.keys?.auth || '').trim();
+  const validBase64Url = /^[A-Za-z0-9_-]+$/;
+  if (endpoint.length > 2048 || !isTrustedWebPushEndpoint(endpoint)
+    || p256dh.length < 40 || p256dh.length > 200 || !validBase64Url.test(p256dh)
+    || auth.length < 8 || auth.length > 100 || !validBase64Url.test(auth)) return null;
+  return {
+    endpoint,
+    expirationTime: Number.isFinite(Number(value.expirationTime)) ? Number(value.expirationTime) : null,
+    keys: { p256dh, auth },
+  };
+}
+
+function webPushConfigured(env) {
+  return Boolean(env?.VAPID_PUBLIC_KEY && env?.VAPID_PRIVATE_KEY && env?.VAPID_SUBJECT);
+}
+
+async function enforcePushSubscriptionRateLimit(db, ipHash) {
+  const key = `push_subscribe:${ipHash}`;
+  const row = await db.prepare(`
+    INSERT INTO api_rate_limits (key, window_started_at, request_count)
+    VALUES (?, CURRENT_TIMESTAMP, 1)
+    ON CONFLICT(key) DO UPDATE SET
+      request_count = CASE
+        WHEN window_started_at <= datetime('now', '-15 minutes') THEN 1
+        ELSE request_count + 1
+      END,
+      window_started_at = CASE
+        WHEN window_started_at <= datetime('now', '-15 minutes') THEN CURRENT_TIMESTAMP
+        ELSE window_started_at
+      END
+    RETURNING request_count
+  `).bind(key).first();
+  return Number(row?.request_count || 0) <= 20;
+}
+
+function getReferrerHost(requestUrl, referrerValue) {
+  if (!referrerValue) return 'Direct';
+  try {
+    const requestHost = new URL(requestUrl).hostname;
+    const referrerHost = new URL(referrerValue).hostname;
+    return referrerHost === requestHost ? 'Internal' : referrerHost.slice(0, 120);
+  } catch {
+    return 'Direct';
+  }
+}
+
+function getAnalyticsReferrerHost(requestUrl, clientValue, headerValue) {
+  const fallback = getReferrerHost(requestUrl, headerValue);
+  const raw = String(clientValue || '').trim();
+  if (!raw) return fallback;
+  if (/^direct$/i.test(raw)) return 'Direct';
+  if (/^internal$/i.test(raw)) return 'Internal';
+
+  const hostname = raw.toLowerCase().replace(/^www\./, '').replace(/\.$/, '');
+  const validHostname = hostname.length <= 253
+    && !hostname.includes('..')
+    && /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(hostname);
+  if (!validHostname) return fallback;
+
+  try {
+    const requestHost = new URL(requestUrl).hostname.toLowerCase().replace(/^www\./, '');
+    return hostname === requestHost ? 'Internal' : hostname;
+  } catch {
+    return fallback;
+  }
 }
 
 function constantTimeCompare(a, b) {
@@ -90,8 +277,13 @@ async function verifyPassword(password, storedHash) {
   if (!storedHash || !password) return false;
   const parts = storedHash.split('$');
   if (parts.length !== 4) return false;
-  const [, iterStr, saltHex, expectedHashHex] = parts;
-  const iterations = parseInt(iterStr, 10) || PBKDF2_ITERATIONS;
+  const [algorithm, iterStr, saltHex, expectedHashHex] = parts;
+  if (algorithm !== HASH_ALGO_PREFIX || !/^\d+$/.test(iterStr)) return false;
+
+  const iterations = Number(iterStr);
+  if (!Number.isSafeInteger(iterations) || iterations < 1) return false;
+  if (iterations > PBKDF2_MAX_ITERATIONS) throw new UnsupportedPasswordHashError();
+  if (!/^[a-f0-9]{32}$/i.test(saltHex) || !/^[a-f0-9]{64}$/i.test(expectedHashHex)) return false;
 
   const encoder = new TextEncoder();
   const salt = hexToUint8Array(saltHex);
@@ -198,6 +390,56 @@ function verifyProviderInvoiceSnapshot(payload, expected) {
   }
 
   return { valid: true };
+}
+
+const CONFIRMED_PROVIDER_STATUSES = new Set(['confirmed', 'finished', 'paid']);
+const ACTIVE_PROVIDER_STATUSES = new Set(['waiting', 'confirming', 'sending', 'partially_paid']);
+const SETTLED_ORDER_STATUSES = new Set(['paid', 'processing', 'completed']);
+
+/**
+ * Derive the order/fulfillment state from an authoritative gateway status
+ * without regressing already-progressed fulfillment on duplicate callbacks.
+ */
+export function deriveOrderStateFromPayment({
+  orderStatus,
+  fulfillmentStatus = 'not_ready',
+  paymentStatus,
+  deliveryMethod = 'download_package',
+}) {
+  const currentOrderStatus = String(orderStatus || 'pending').toLowerCase();
+  const currentFulfillmentStatus = String(fulfillmentStatus || 'not_ready');
+  const providerStatus = String(paymentStatus || '').toLowerCase();
+  let nextOrderStatus = currentOrderStatus;
+  let nextFulfillmentStatus = currentFulfillmentStatus;
+
+  if (CONFIRMED_PROVIDER_STATUSES.has(providerStatus)) {
+    // Preserve lifecycle progress and completed/refunded history on duplicate
+    // provider events. Any genuinely unpaid or cancelled order that receives
+    // money must become paid so it cannot be silently abandoned.
+    if (!SETTLED_ORDER_STATUSES.has(currentOrderStatus) && currentOrderStatus !== 'refunded') {
+      nextOrderStatus = 'paid';
+      nextFulfillmentStatus = deliveryMethod === 'geelark_setup' ? 'setup_pending' : 'fulfillment_pending';
+    }
+  } else if (providerStatus === 'refunded') {
+    nextOrderStatus = 'refunded';
+  } else if (['failed', 'expired'].includes(providerStatus)) {
+    if (['pending', 'awaiting_payment', 'failed'].includes(currentOrderStatus)) {
+      nextOrderStatus = 'failed';
+    }
+  } else if (ACTIVE_PROVIDER_STATUSES.has(providerStatus)) {
+    // Recover legacy/manual false failures when the live invoice is still
+    // active. Never reopen cancelled/refunded or regress paid fulfillment.
+    if (['pending', 'failed'].includes(currentOrderStatus)) {
+      nextOrderStatus = 'awaiting_payment';
+      nextFulfillmentStatus = 'not_ready';
+    }
+  }
+
+  return {
+    orderStatus: nextOrderStatus,
+    fulfillmentStatus: nextFulfillmentStatus,
+    changed: nextOrderStatus !== currentOrderStatus || nextFulfillmentStatus !== currentFulfillmentStatus,
+  };
 }
 
 function getSiteOrigin(env) {
@@ -667,7 +909,82 @@ function resolveServerAuthoritativeCart(cartInput = []) {
   return { resolvedCart };
 }
 
-function calculateOrderTotals(resolvedCart = [], deliveryMethod = 'download_package') {
+function normalizeCouponCode(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function isValidCouponCodeFormat(value) {
+  return /^[A-Z0-9][A-Z0-9_-]{2,31}$/.test(normalizeCouponCode(value));
+}
+
+async function resolveCouponDiscount(db, rawCode, workflowSubtotal) {
+  const code = normalizeCouponCode(rawCode);
+  if (!isValidCouponCodeFormat(code)) {
+    return { valid: false, error: 'Coupon code is invalid.' };
+  }
+
+  const coupon = await db.prepare(`
+    SELECT c.*,
+           (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.coupon_id = c.id) AS redemption_count,
+           CASE WHEN c.starts_at IS NULL OR datetime(c.starts_at) <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END AS has_started,
+           CASE WHEN c.expires_at IS NULL OR datetime(c.expires_at) > CURRENT_TIMESTAMP THEN 1 ELSE 0 END AS has_not_expired
+    FROM coupon_codes c
+    WHERE c.code = ? COLLATE NOCASE
+    LIMIT 1
+  `).bind(code).first();
+
+  if (!coupon || Number(coupon.active) !== 1) {
+    return { valid: false, error: 'Coupon code is invalid or inactive.' };
+  }
+  if (Number(coupon.has_started) !== 1) {
+    return { valid: false, error: 'This coupon is not active yet.' };
+  }
+  if (Number(coupon.has_not_expired) !== 1) {
+    return { valid: false, error: 'This coupon has expired.' };
+  }
+
+  const redemptionCount = Number(coupon.redemption_count || 0);
+  const maxRedemptions = coupon.max_redemptions === null || coupon.max_redemptions === undefined
+    ? null
+    : Number(coupon.max_redemptions);
+  if (maxRedemptions !== null && redemptionCount >= maxRedemptions) {
+    return { valid: false, error: 'This coupon has reached its usage limit.' };
+  }
+
+  const subtotalCents = usdToCents(workflowSubtotal);
+  const minimumCents = Math.max(0, Number(coupon.min_subtotal_cents || 0));
+  if (subtotalCents < minimumCents) {
+    return {
+      valid: false,
+      error: `This coupon requires a workflow subtotal of at least $${(minimumCents / 100).toFixed(2)} USD.`,
+    };
+  }
+
+  const storedValue = Number(coupon.discount_value || 0);
+  const discountCents = coupon.discount_type === 'percentage'
+    ? Math.round(subtotalCents * storedValue / 100)
+    : storedValue;
+  const cappedDiscountCents = Math.min(subtotalCents, Math.max(0, discountCents));
+  if (cappedDiscountCents <= 0) {
+    return { valid: false, error: 'This coupon does not apply to the current order.' };
+  }
+
+  return {
+    valid: true,
+    couponId: coupon.id,
+    code,
+    description: coupon.description || null,
+    discountType: coupon.discount_type,
+    discountValue: storedValue,
+    discountCents: cappedDiscountCents,
+    discountUsd: cappedDiscountCents / 100,
+    discountLabel: coupon.discount_type === 'percentage'
+      ? `${storedValue}% off workflows`
+      : `$${(storedValue / 100).toFixed(2)} off workflows`,
+  };
+}
+
+function calculateOrderTotals(resolvedCart = [], deliveryMethod = 'download_package', couponDiscountCents = 0) {
   const workflowSubtotal = (resolvedCart || []).reduce((sum, item) => {
     const price = Number(item.price) || 0;
     const quantity = Number(item.quantity) || 1;
@@ -679,10 +996,17 @@ function calculateOrderTotals(resolvedCart = [], deliveryMethod = 'download_pack
     setupFee = workflowSubtotal >= 300 ? 0 : 50;
   }
 
-  const finalTotal = workflowSubtotal + setupFee;
+  const workflowSubtotalCents = usdToCents(workflowSubtotal);
+  const normalizedDiscountCents = Math.min(
+    workflowSubtotalCents,
+    Math.max(0, Number.isInteger(couponDiscountCents) ? couponDiscountCents : 0),
+  );
+  const couponDiscount = normalizedDiscountCents / 100;
+  const finalTotal = workflowSubtotal + setupFee - couponDiscount;
   return {
     workflowSubtotal: Number(workflowSubtotal.toFixed(2)),
     setupFee: Number(setupFee.toFixed(2)),
+    couponDiscount: Number(couponDiscount.toFixed(2)),
     finalTotal: Number(finalTotal.toFixed(2)),
     setupFeeLabel: deliveryMethod === 'geelark_setup' ? (setupFee === 0 ? 'FREE' : '$50') : 'Included',
   };
@@ -700,6 +1024,8 @@ async function sendPaymentConfirmationEmail({
   deliveryMethod = 'download_package',
   workflowSubtotal = 0,
   setupFee = 0,
+  couponCode = null,
+  couponDiscount = 0,
   totalUsd = 0,
 }) {
   if (!resendApiKey) {
@@ -754,7 +1080,7 @@ async function sendPaymentConfirmationEmail({
           </tr>
           <tr>
             <td style="padding: 4px 0; color: #828c85; font-family: monospace;">Registered Email:</td>
-            <td style="padding: 4px 0; text-align: right; font-family: monospace; color: #f1f3f1;">${customerEmail}</td>
+            <td style="padding: 4px 0; text-align: right; font-family: monospace; color: #f1f3f1;">${escapeHtml(customerEmail)}</td>
           </tr>
         </table>
 
@@ -775,6 +1101,11 @@ async function sendPaymentConfirmationEmail({
               <td style="padding: 3px 0; color: #828c85;">Delivery / Setup:</td>
               <td style="padding: 3px 0; text-align: right; font-family: monospace; color: ${setupFee === 0 ? '#a7ff4f' : '#e1e6e2'};">${setupFeeDisplay}</td>
             </tr>
+            ${couponCode && Number(couponDiscount) > 0 ? `
+            <tr>
+              <td style="padding: 3px 0; color: #828c85;">Coupon (${couponCode}):</td>
+              <td style="padding: 3px 0; text-align: right; font-family: monospace; color: #a7ff4f;">−$${Number(couponDiscount).toFixed(2)} USD</td>
+            </tr>` : ''}
             <tr style="border-top: 1px solid #2e3831;">
               <td style="padding: 8px 0 0 0; font-weight: 700; color: #ffffff; font-size: 14px;">Total Paid:</td>
               <td style="padding: 8px 0 0 0; text-align: right; font-family: monospace; font-weight: 700; color: #a7ff4f; font-size: 15px;">$${Number(totalUsd).toFixed(2)} USD</td>
@@ -1194,7 +1525,9 @@ function requireRole(requiredRole) {
 
 const ALLOWED_ORDER_TRANSITIONS = {
   pending: ['awaiting_payment', 'cancelled'],
-  awaiting_payment: ['paid', 'failed', 'cancelled'],
+  // Payment settlement/failure is gateway-controlled. Manual settlement must
+  // use the separately audited Force Settle endpoint.
+  awaiting_payment: ['cancelled'],
   paid: ['processing', 'refunded'],
   processing: ['completed', 'refunded'],
   completed: ['refunded'],
@@ -1203,9 +1536,74 @@ const ALLOWED_ORDER_TRANSITIONS = {
   failed: [],
 };
 
+const ALLOWED_FULFILLMENT_TRANSITIONS = {
+  download_package: {
+    not_ready: ['fulfillment_pending'],
+    fulfillment_pending: ['package_preparing', 'failed'],
+    package_preparing: ['package_delivered', 'failed'],
+    package_delivered: [],
+    failed: [],
+  },
+  geelark_setup: {
+    not_ready: ['setup_pending'],
+    setup_pending: ['setup_in_progress', 'failed'],
+    setup_in_progress: ['setup_completed', 'failed'],
+    setup_completed: [],
+    failed: [],
+  },
+};
+
 // ----------------------------------------------------
 // CUSTOMER-FACING STOREFRONT APIS (PRESERVED)
 // ----------------------------------------------------
+
+// POST /api/coupons/validate — previews an authoritative coupon discount
+app.post('/coupons/validate', async (c) => {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Coupon validation is temporarily unavailable.' }, 503);
+
+  try {
+    const body = await c.req.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return c.json({ success: false, error: 'Invalid coupon request.' }, 400);
+    }
+
+    const selectedDeliveryMethod = body.delivery_method || body.deliveryMethod || 'download_package';
+    if (!['download_package', 'geelark_setup'].includes(selectedDeliveryMethod)) {
+      return c.json({ success: false, error: 'Please select a valid delivery method.' }, 400);
+    }
+
+    const cartResolution = resolveServerAuthoritativeCart(body.cart || []);
+    if (cartResolution.error) {
+      return c.json({ success: false, error: cartResolution.error }, 400);
+    }
+
+    const baseTotals = calculateOrderTotals(cartResolution.resolvedCart, selectedDeliveryMethod);
+    const coupon = await resolveCouponDiscount(db, body.coupon_code || body.couponCode, baseTotals.workflowSubtotal);
+    if (!coupon.valid) {
+      return c.json({ success: false, error: coupon.error }, 400);
+    }
+
+    const totals = calculateOrderTotals(cartResolution.resolvedCart, selectedDeliveryMethod, coupon.discountCents);
+    return c.json({
+      success: true,
+      data: {
+        code: coupon.code,
+        description: coupon.description,
+        discountType: coupon.discountType,
+        discountValue: coupon.discountValue,
+        discountLabel: coupon.discountLabel,
+        workflowSubtotal: totals.workflowSubtotal,
+        setupFee: totals.setupFee,
+        couponDiscount: totals.couponDiscount,
+        totalUsd: totals.finalTotal,
+      },
+    });
+  } catch (err) {
+    console.error('Coupon validation error:', err.message);
+    return c.json({ success: false, error: 'Coupon validation is temporarily unavailable.' }, 500);
+  }
+});
 
 // POST /api/checkout/create
 app.post('/checkout/create', async (c) => {
@@ -1215,24 +1613,22 @@ app.post('/checkout/create', async (c) => {
       return c.json({ success: false, error: 'Checkout is temporarily unavailable. Please try again shortly.' }, 503);
     }
 
-    const clientIp = c.req.header('cf-connecting-ip');
-    if (clientIp) {
-      try {
-        const ipHash = await sha256Hex(clientIp);
-        if (!(await enforceCheckoutCreationRateLimit(db, ipHash))) {
-          c.header('Retry-After', '900');
-          return c.json({
-            success: false,
-            error: 'Too many checkout attempts. Please wait a few minutes before creating another invoice.',
-          }, 429);
-        }
-      } catch (rateErr) {
-        console.error('Checkout creation rate limit failed closed:', rateErr.message);
+    const clientIp = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || null;
+    try {
+      const ipHash = await sha256Hex(clientIp || 'unknown');
+      if (!(await enforceCheckoutCreationRateLimit(db, ipHash))) {
+        c.header('Retry-After', '900');
         return c.json({
           success: false,
-          error: 'Checkout protection is temporarily unavailable. Please try again shortly.',
-        }, 503);
+          error: 'Too many checkout attempts. Please wait a few minutes before creating another invoice.',
+        }, 429);
       }
+    } catch (rateErr) {
+      console.error('Checkout creation rate limit failed closed:', rateErr.message);
+      return c.json({
+        success: false,
+        error: 'Checkout protection is temporarily unavailable. Please try again shortly.',
+      }, 503);
     }
 
     let body;
@@ -1244,7 +1640,7 @@ app.post('/checkout/create', async (c) => {
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return c.json({ success: false, error: 'Request body must be a JSON object.' }, 400);
     }
-    const { email, network, payment_network, delivery_method, deliveryMethod, cart = [] } = body;
+    const { email, network, payment_network, delivery_method, deliveryMethod, coupon_code, couponCode, cart = [] } = body;
 
     if (!isValidEmail(email)) {
       return c.json({ success: false, error: 'Please enter a valid email address.' }, 400);
@@ -1277,7 +1673,20 @@ app.post('/checkout/create', async (c) => {
     const resolvedCart = cartResolution.resolvedCart;
 
     // 2. Authoritative Server-Side Financial Calculation
-    const { workflowSubtotal, setupFee, finalTotal } = calculateOrderTotals(resolvedCart, selectedDeliveryMethod);
+    const baseTotals = calculateOrderTotals(resolvedCart, selectedDeliveryMethod);
+    let appliedCoupon = null;
+    const suppliedCouponCode = coupon_code || couponCode;
+    if (suppliedCouponCode) {
+      appliedCoupon = await resolveCouponDiscount(db, suppliedCouponCode, baseTotals.workflowSubtotal);
+      if (!appliedCoupon.valid) {
+        return c.json({ success: false, error: appliedCoupon.error }, 400);
+      }
+    }
+    const { workflowSubtotal, setupFee, couponDiscount, finalTotal } = calculateOrderTotals(
+      resolvedCart,
+      selectedDeliveryMethod,
+      appliedCoupon?.discountCents || 0,
+    );
 
     if (finalTotal < networkConfig.min_amount_usd) {
       return c.json({
@@ -1381,11 +1790,12 @@ app.post('/checkout/create', async (c) => {
     const expiresAtStr = new Date(Date.now() + 30 * 60 * 1000).toISOString();
 
     try {
-      await db.batch([
+      const persistenceStatements = [
         db.prepare(
           `INSERT INTO orders
-           (id, customer_email, total_usd, total_usd_cents, delivery_method, workflow_subtotal, workflow_subtotal_cents, setup_fee, setup_fee_cents, status, items, fulfillment_status, status_token_hash)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (id, customer_email, total_usd, total_usd_cents, delivery_method, workflow_subtotal, workflow_subtotal_cents, setup_fee, setup_fee_cents,
+            coupon_code, coupon_discount_usd, coupon_discount_cents, status, items, fulfillment_status, status_token_hash)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           orderId,
           cleanEmail,
@@ -1396,6 +1806,9 @@ app.post('/checkout/create', async (c) => {
           usdToCents(workflowSubtotal),
           setupFee,
           usdToCents(setupFee),
+          appliedCoupon?.code || null,
+          couponDiscount,
+          usdToCents(couponDiscount),
           'awaiting_payment',
           JSON.stringify(resolvedCart),
           'not_ready',
@@ -1421,7 +1834,25 @@ app.post('/checkout/create', async (c) => {
           'waiting',
           'nowpayments_api_double_verified',
         ),
-      ]);
+      ];
+
+      if (appliedCoupon) {
+        persistenceStatements.push(
+          db.prepare(
+            `INSERT INTO coupon_redemptions
+             (id, coupon_id, order_id, customer_email, discount_cents)
+             VALUES (?, ?, ?, ?, ?)`
+          ).bind(
+            'cpnred_' + generateSecureToken(10),
+            appliedCoupon.couponId,
+            orderId,
+            cleanEmail,
+            appliedCoupon.discountCents,
+          ),
+        );
+      }
+
+      await db.batch(persistenceStatements);
     } catch (dbErr) {
       console.error(`Checkout persistence failed for ${orderId}:`, dbErr.message);
       return c.json({
@@ -1446,6 +1877,9 @@ app.post('/checkout/create', async (c) => {
         deliveryMethod: selectedDeliveryMethod,
         workflowSubtotal,
         setupFee,
+        couponCode: appliedCoupon?.code || null,
+        couponDiscount,
+        couponLabel: appliedCoupon?.discountLabel || null,
         totalUsd: finalTotal,
         payAmountCrypto,
         payAddress,
@@ -1667,7 +2101,8 @@ app.post('/webhooks/crypto', async (c) => {
 
     const orderRec = await db.prepare(
       `SELECT id, customer_email, status, items, total_usd, total_usd_cents,
-              delivery_method, workflow_subtotal, setup_fee
+               delivery_method, workflow_subtotal, setup_fee, fulfillment_status,
+               coupon_code, coupon_discount_usd
        FROM orders WHERE id = ?`
     ).bind(String(order_id)).first();
 
@@ -1676,7 +2111,14 @@ app.post('/webhooks/crypto', async (c) => {
       return c.json({ success: true, status: 'ignored_unmatched_invoice' });
     }
 
-    if (['confirmed', 'finished', 'paid'].includes(normalizedStatus)) {
+    const derivedState = deriveOrderStateFromPayment({
+      orderStatus: orderRec.status,
+      fulfillmentStatus: orderRec.fulfillment_status,
+      paymentStatus: normalizedStatus,
+      deliveryMethod: orderRec.delivery_method,
+    });
+
+    if (CONFIRMED_PROVIDER_STATUSES.has(normalizedStatus)) {
       const reconciliation = reconcileProviderPayment(payload, paymentRec, orderRec);
       if (!reconciliation.valid) {
         await db.prepare(
@@ -1688,10 +2130,6 @@ app.post('/webhooks/crypto', async (c) => {
         return c.json({ success: true, status: 'manual_review' });
       }
 
-      const initialFulfillmentStatus = orderRec.delivery_method === 'geelark_setup'
-        ? 'setup_pending'
-        : 'fulfillment_pending';
-
       await db.batch([
         db.prepare(
           `UPDATE crypto_payments
@@ -1701,10 +2139,23 @@ app.post('/webhooks/crypto', async (c) => {
         db.prepare(
           `UPDATE orders SET status = ?, fulfillment_status = ?, updated_at = CURRENT_TIMESTAMP
            WHERE id = ?`
-        ).bind('paid', initialFulfillmentStatus, orderRec.id),
+        ).bind(derivedState.orderStatus, derivedState.fulfillmentStatus, orderRec.id),
       ]);
 
-      if (!['paid', 'processing', 'completed'].includes(orderRec.status)) {
+      if (derivedState.changed) {
+        await recordAuditLog(db, {
+          adminEmail: 'system:nowpayments',
+          action: 'ORDER_STATUS_RECONCILED',
+          entityType: 'order',
+          entityId: orderRec.id,
+          previousState: orderRec.status,
+          newState: derivedState.orderStatus,
+          reason: `NOWPayments reported ${normalizedStatus}`,
+          metadata: { paymentId: paymentRec.id, source: 'webhook' },
+        });
+      }
+
+      if (!SETTLED_ORDER_STATUSES.has(orderRec.status) && derivedState.orderStatus === 'paid') {
         let parsedItems = [];
         try {
           parsedItems = JSON.parse(orderRec.items || '[]');
@@ -1736,6 +2187,8 @@ app.post('/webhooks/crypto', async (c) => {
               deliveryMethod: orderRec.delivery_method || 'download_package',
               workflowSubtotal: orderRec.workflow_subtotal || orderRec.total_usd,
               setupFee: orderRec.setup_fee || 0,
+              couponCode: orderRec.coupon_code || null,
+              couponDiscount: orderRec.coupon_discount_usd || 0,
               totalUsd: orderRec.total_usd,
             });
             await db.prepare(
@@ -1759,25 +2212,32 @@ app.post('/webhooks/crypto', async (c) => {
              WHERE id = ? AND order_id = ?`
           ).bind(normalizedStatus, paymentRec.id, orderRec.id),
         ];
-        if (normalizedStatus === 'refunded') {
+        if (derivedState.changed) {
           updates.push(
-            db.prepare("UPDATE orders SET status = 'refunded', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-              .bind(orderRec.id)
-          );
-        } else if (['failed', 'expired'].includes(normalizedStatus) && ['pending', 'awaiting_payment'].includes(orderRec.status)) {
-          updates.push(
-            db.prepare("UPDATE orders SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-              .bind(orderRec.id)
+            db.prepare('UPDATE orders SET status = ?, fulfillment_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+              .bind(derivedState.orderStatus, derivedState.fulfillmentStatus, orderRec.id)
           );
         }
         await db.batch(updates);
+        if (derivedState.changed) {
+          await recordAuditLog(db, {
+            adminEmail: 'system:nowpayments',
+            action: 'ORDER_STATUS_RECONCILED',
+            entityType: 'order',
+            entityId: orderRec.id,
+            previousState: orderRec.status,
+            newState: derivedState.orderStatus,
+            reason: `NOWPayments reported ${normalizedStatus}`,
+            metadata: { paymentId: paymentRec.id, source: 'webhook' },
+          });
+        }
       }
     }
 
     return c.json({ success: true, status: 'processed' });
   } catch (err) {
     console.error('NOWPayments webhook processing error:', err.message);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -1945,7 +2405,7 @@ app.post('/webhooks/resend', async (c) => {
     return c.json({ success: true, status: 'received_no_db' });
   } catch (err) {
     console.error('Resend inbound webhook error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -1980,7 +2440,8 @@ app.get('/checkout/status/:id', async (c) => {
 
     const order = await db.prepare(
       `SELECT id, status, total_usd, total_usd_cents, delivery_method, workflow_subtotal,
-              workflow_subtotal_cents, setup_fee, setup_fee_cents, fulfillment_status, status_token_hash
+               workflow_subtotal_cents, setup_fee, setup_fee_cents, coupon_code,
+               coupon_discount_usd, coupon_discount_cents, fulfillment_status, status_token_hash
        FROM orders WHERE id = ?`
     ).bind(payment.order_id).first();
 
@@ -2012,6 +2473,9 @@ app.get('/checkout/status/:id', async (c) => {
     const setupFee = Number.isInteger(order.setup_fee_cents)
       ? order.setup_fee_cents / 100
       : Number(order.setup_fee || 0);
+    const couponDiscount = Number.isInteger(order.coupon_discount_cents)
+      ? order.coupon_discount_cents / 100
+      : Number(order.coupon_discount_usd || 0);
 
     return c.json({
       success: true,
@@ -2033,6 +2497,8 @@ app.get('/checkout/status/:id', async (c) => {
         deliveryMethod: order.delivery_method || 'download_package',
         workflowSubtotal,
         setupFee,
+        couponCode: order.coupon_code || null,
+        couponDiscount,
         totalUsd,
         payAmount: payment.pay_amount_crypto,
         payAddress: payment.pay_address,
@@ -2120,6 +2586,522 @@ app.get('/downloads/:token/:productId', async (c) => {
 });
 
 // ----------------------------------------------------
+// PRIVACY-CONSCIOUS STOREFRONT ANALYTICS
+// ----------------------------------------------------
+
+// POST /api/analytics/events
+app.post('/analytics/events', async (c) => {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Analytics unavailable.' }, 503);
+
+  try {
+    const body = await c.req.json();
+    const eventType = String(body?.event_type || '');
+    const visitorId = String(body?.visitor_id || '');
+    const sessionId = String(body?.session_id || '');
+    const eventId = String(body?.event_id || '');
+    const productId = body?.product_id ? String(body.product_id) : null;
+    const validClientId = (value) => /^[a-zA-Z0-9_-]{16,80}$/.test(value);
+
+    if (!['page_view', 'cart_add'].includes(eventType)
+      || !validClientId(visitorId)
+      || !validClientId(sessionId)
+      || !validClientId(eventId)) {
+      return c.json({ success: false, error: 'Invalid analytics event.' }, 400);
+    }
+
+    if (eventType === 'cart_add' && (!productId || !AUTHORITATIVE_CATALOG_MAP.has(productId))) {
+      return c.json({ success: false, error: 'Unknown storefront flow.' }, 400);
+    }
+
+    const pagePath = normalizeAnalyticsPath(body?.page_path);
+    const visitorHash = await sha256Hex(`storefront-visitor:v1:${visitorId}`);
+    const sessionHash = await sha256Hex(`storefront-session:v1:${sessionId}`);
+    const dedupeMaterial = eventType === 'page_view'
+      ? `${visitorHash}|${sessionHash}|${eventType}|${pagePath}`
+      : `${visitorHash}|${eventType}|${eventId}`;
+    const dedupeKey = await sha256Hex(dedupeMaterial);
+
+    const clientIp = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || '';
+    const analyticsSecret = c.env?.ANALYTICS_HASH_SALT || c.env?.ADMIN_BOOTSTRAP_SECRET || '';
+    const ipHash = analyticsSecret
+      ? await hmacSha256Hex(analyticsSecret, `storefront-analytics-ip:v1:${clientIp}`)
+      : null;
+
+    const rateQuery = ipHash
+      ? 'SELECT COUNT(*) AS count FROM storefront_analytics_events WHERE (visitor_hash = ? OR ip_hash = ?) AND created_at > datetime(\'now\', \'-10 minutes\')'
+      : 'SELECT COUNT(*) AS count FROM storefront_analytics_events WHERE visitor_hash = ? AND created_at > datetime(\'now\', \'-10 minutes\')';
+    const recentCount = ipHash
+      ? await db.prepare(rateQuery).bind(visitorHash, ipHash).first()
+      : await db.prepare(rateQuery).bind(visitorHash).first();
+    if (Number(recentCount?.count || 0) >= 100) {
+      return c.json({ success: false, error: 'Analytics rate limit exceeded.' }, 429);
+    }
+
+    const cf = c.req.raw?.cf || {};
+    const { deviceType, browserFamily, osFamily } = classifyUserAgent(c.req.header('user-agent'));
+    const eventRecordId = 'evt_' + generateSecureToken(12);
+    const result = await db.prepare(`
+      INSERT OR IGNORE INTO storefront_analytics_events
+        (id, dedupe_key, event_type, visitor_hash, session_hash, product_id, page_path,
+         referrer_host, ip_hash, ip_network, country_code, region, city,
+         device_type, browser_family, os_family)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      eventRecordId,
+      dedupeKey,
+      eventType,
+      visitorHash,
+      sessionHash,
+      productId,
+      pagePath,
+      getAnalyticsReferrerHost(c.req.url, body?.landing_referrer_host, c.req.header('referer')),
+      ipHash,
+      maskIpNetwork(clientIp),
+      String(cf.country || c.req.header('cf-ipcountry') || '').slice(0, 2).toUpperCase() || null,
+      String(cf.region || '').slice(0, 80) || null,
+      String(cf.city || '').slice(0, 80) || null,
+      deviceType,
+      browserFamily,
+      osFamily,
+    ).run();
+
+    // Enforce rolling retention whenever analytics receives traffic.
+    await db.prepare("DELETE FROM storefront_analytics_events WHERE created_at < datetime('now', '-90 days')")
+      .run()
+      .catch(() => {});
+
+    return c.json({ success: true, recorded: Number(result?.meta?.changes || result?.changes || 0) > 0 }, 202);
+  } catch (err) {
+    console.error('Storefront analytics error:', err);
+    return c.json({ success: false, error: 'Analytics event could not be recorded.' }, 500);
+  }
+});
+
+// POST /api/analytics/cart-state — keeps a privacy-conscious last-known cart
+// snapshot so removals and cleared carts are reflected in the admin dashboard.
+app.post('/analytics/cart-state', async (c) => {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Analytics unavailable.' }, 503);
+
+  try {
+    const body = await c.req.json();
+    const visitorId = String(body?.visitor_id || '');
+    const sessionId = String(body?.session_id || '');
+    const eventId = String(body?.event_id || '');
+    const validClientId = (value) => /^[a-zA-Z0-9_-]{16,80}$/.test(value);
+    const rawProductIds = Array.isArray(body?.product_ids) ? body.product_ids : null;
+
+    if (!validClientId(visitorId) || !validClientId(sessionId) || !validClientId(eventId)
+      || !rawProductIds || rawProductIds.length > 25) {
+      return c.json({ success: false, error: 'Invalid cart analytics state.' }, 400);
+    }
+
+    const productIds = [...new Set(rawProductIds.map((value) => String(value || '').trim()).filter(Boolean))];
+    if (productIds.length !== rawProductIds.length
+      || productIds.some((productId) => !AUTHORITATIVE_CATALOG_MAP.has(productId))) {
+      return c.json({ success: false, error: 'Unknown storefront flow in cart.' }, 400);
+    }
+
+    const visitorHash = await sha256Hex(`storefront-visitor:v1:${visitorId}`);
+    const sessionHash = await sha256Hex(`storefront-session:v1:${sessionId}`);
+    const pagePath = normalizeAnalyticsPath(body?.page_path);
+    const clientIp = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || '';
+    const cf = c.req.raw?.cf || {};
+    const { deviceType, browserFamily, osFamily } = classifyUserAgent(c.req.header('user-agent'));
+    const cartValueCents = productIds.reduce(
+      (sum, productId) => sum + Math.round(AUTHORITATIVE_CATALOG_MAP.get(productId).price * 100),
+      0,
+    );
+
+    await db.prepare(`
+      INSERT INTO storefront_cart_state
+        (visitor_hash, session_hash, product_ids_json, item_count, cart_value_cents,
+         page_path, referrer_host, ip_network, country_code, region, city,
+         device_type, browser_family, os_family)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(visitor_hash) DO UPDATE SET
+        session_hash = excluded.session_hash,
+        product_ids_json = excluded.product_ids_json,
+        item_count = excluded.item_count,
+        cart_value_cents = excluded.cart_value_cents,
+        page_path = excluded.page_path,
+        referrer_host = COALESCE(excluded.referrer_host, storefront_cart_state.referrer_host),
+        ip_network = excluded.ip_network,
+        country_code = excluded.country_code,
+        region = excluded.region,
+        city = excluded.city,
+        device_type = excluded.device_type,
+        browser_family = excluded.browser_family,
+        os_family = excluded.os_family,
+        updated_at = CURRENT_TIMESTAMP
+    `).bind(
+      visitorHash,
+      sessionHash,
+      JSON.stringify(productIds),
+      productIds.length,
+      cartValueCents,
+      pagePath,
+      getAnalyticsReferrerHost(c.req.url, body?.landing_referrer_host, c.req.header('referer')),
+      maskIpNetwork(clientIp),
+      String(cf.country || c.req.header('cf-ipcountry') || '').slice(0, 2).toUpperCase() || null,
+      String(cf.region || '').slice(0, 80) || null,
+      String(cf.city || '').slice(0, 80) || null,
+      deviceType,
+      browserFamily,
+      osFamily,
+    ).run();
+
+    await db.prepare("DELETE FROM storefront_cart_state WHERE updated_at < datetime('now', '-90 days')")
+      .run()
+      .catch(() => {});
+
+    return c.json({ success: true, recorded: true }, 202);
+  } catch (err) {
+    console.error('Storefront cart-state analytics error:', err);
+    return c.json({ success: false, error: 'Cart analytics state could not be recorded.' }, 500);
+  }
+});
+
+// Browser Push opt-in. Permission is requested by the client only after a
+// visitor presses the explicit enable button; this endpoint never prompts.
+app.get('/push/config', async (c) => c.json({
+  success: true,
+  enabled: webPushConfigured(c.env),
+  public_key: webPushConfigured(c.env) ? c.env.VAPID_PUBLIC_KEY : null,
+}));
+
+app.post('/push/subscribe', async (c) => {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Push subscriptions are temporarily unavailable.' }, 503);
+  if (!webPushConfigured(c.env)) return c.json({ success: false, error: 'Browser push is not configured.' }, 503);
+  try {
+    const body = await c.req.json().catch(() => null);
+    const visitorId = body?.visitor_id;
+    const subscription = normalizeWebPushSubscription(body?.subscription);
+    if (!validStorefrontClientId(visitorId) || !subscription) {
+      return c.json({ success: false, error: 'Invalid browser push subscription.' }, 400);
+    }
+
+    const clientIp = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || '';
+    const ipHash = await sha256Hex(`push-subscribe:v1:${clientIp}`);
+    if (!(await enforcePushSubscriptionRateLimit(db, ipHash))) {
+      return c.json({ success: false, error: 'Too many push subscription attempts. Please try again later.' }, 429);
+    }
+
+    const visitorHash = await sha256Hex(`storefront-visitor:v1:${visitorId}`);
+    const endpointHash = await sha256Hex(`push-endpoint:v1:${subscription.endpoint}`);
+    const existing = await db.prepare('SELECT id FROM storefront_push_subscriptions WHERE endpoint_hash = ?')
+      .bind(endpointHash).first();
+    const subscriptionId = existing?.id || `psh_${generateSecureToken(10)}`;
+
+    await db.prepare(`
+      INSERT INTO storefront_push_subscriptions
+        (id, endpoint_hash, endpoint, p256dh_key, auth_key, visitor_hash, active, failure_count, revoked_at, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, ?, 1, 0, NULL, CURRENT_TIMESTAMP)
+      ON CONFLICT(endpoint_hash) DO UPDATE SET
+        endpoint = excluded.endpoint,
+        p256dh_key = excluded.p256dh_key,
+        auth_key = excluded.auth_key,
+        visitor_hash = excluded.visitor_hash,
+        active = 1,
+        failure_count = 0,
+        revoked_at = NULL,
+        last_seen_at = CURRENT_TIMESTAMP
+    `).bind(
+      subscriptionId,
+      endpointHash,
+      subscription.endpoint,
+      subscription.keys.p256dh,
+      subscription.keys.auth,
+      visitorHash,
+    ).run();
+
+    return c.json({ success: true, subscribed: true });
+  } catch (err) {
+    console.error('Browser push subscription error:', err.message);
+    return c.json({ success: false, error: 'Browser push could not be enabled.' }, 500);
+  }
+});
+
+app.post('/push/unsubscribe', async (c) => {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Push subscriptions are temporarily unavailable.' }, 503);
+  try {
+    const body = await c.req.json().catch(() => null);
+    const visitorId = body?.visitor_id;
+    const endpoint = String(body?.endpoint || '').trim();
+    if (!validStorefrontClientId(visitorId) || !isTrustedWebPushEndpoint(endpoint)) {
+      return c.json({ success: false, error: 'Invalid browser push subscription.' }, 400);
+    }
+    const visitorHash = await sha256Hex(`storefront-visitor:v1:${visitorId}`);
+    const endpointHash = await sha256Hex(`push-endpoint:v1:${endpoint}`);
+    await db.prepare(`
+      UPDATE storefront_push_subscriptions
+      SET active = 0, revoked_at = CURRENT_TIMESTAMP, last_seen_at = CURRENT_TIMESTAMP
+      WHERE endpoint_hash = ? AND visitor_hash = ?
+    `).bind(endpointHash, visitorHash).run();
+    return c.json({ success: true, subscribed: false });
+  } catch (err) {
+    console.error('Browser push unsubscribe error:', err.message);
+    return c.json({ success: false, error: 'Browser push could not be disabled.' }, 500);
+  }
+});
+
+async function sendBrowserPushCampaign(db, env, notificationId) {
+  if (!webPushConfigured(env)) return { sent: 0, failed: 0, gone: 0, skipped: 0 };
+  const campaign = await db.prepare(`
+    SELECT n.*, c.code AS coupon_code
+    FROM storefront_notifications n
+    LEFT JOIN coupon_codes c ON c.id = n.coupon_id
+    WHERE n.id = ? AND n.push_enabled = 1 AND n.active = 1
+  `).bind(notificationId).first();
+  if (!campaign) return { sent: 0, failed: 0, gone: 0, skipped: 0 };
+
+  const subscriptionRows = await db.prepare(`
+    SELECT s.*, cs.product_ids_json, cs.item_count, cs.updated_at AS cart_updated_at
+    FROM storefront_push_subscriptions s
+    LEFT JOIN storefront_cart_state cs
+      ON cs.visitor_hash = s.visitor_hash
+      AND cs.updated_at > datetime('now', '-30 days')
+    WHERE s.active = 1
+    ORDER BY s.last_seen_at DESC
+    LIMIT 500
+  `).all();
+
+  const eligible = (subscriptionRows?.results || []).filter((subscription) => {
+    if (campaign.audience_type === 'active_cart') return Number(subscription.item_count || 0) > 0;
+    if (campaign.audience_type === 'product_cart') {
+      try {
+        const productIds = JSON.parse(subscription.product_ids_json || '[]');
+        return Array.isArray(productIds) && productIds.includes(campaign.product_id);
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  const stats = { sent: 0, failed: 0, gone: 0, skipped: 0 };
+  const vapid = {
+    subject: env.VAPID_SUBJECT,
+    publicKey: env.VAPID_PUBLIC_KEY,
+    privateKey: env.VAPID_PRIVATE_KEY,
+  };
+  let pushDestination = normalizeInternalCtaUrl(campaign.cta_url, campaign.coupon_code ? '/checkout' : '/') || '/';
+  if (campaign.coupon_code && pushDestination.startsWith('/checkout')) {
+    const separator = pushDestination.includes('?') ? '&' : '?';
+    pushDestination = `${pushDestination}${separator}coupon=${encodeURIComponent(campaign.coupon_code)}`;
+  }
+  const pushData = JSON.stringify({
+    title: campaign.title,
+    body: campaign.message,
+    url: pushDestination,
+    couponCode: campaign.coupon_code || null,
+    notificationId: campaign.id,
+    tag: `geelark-${campaign.id}`,
+  });
+
+  const deliver = async (subscription) => {
+    const deliveryId = `psd_${generateSecureToken(10)}`;
+    const claimed = await db.prepare(`
+      INSERT OR IGNORE INTO storefront_push_deliveries
+        (id, notification_id, subscription_id, status)
+      VALUES (?, ?, ?, 'pending')
+    `).bind(deliveryId, campaign.id, subscription.id).run();
+    const changes = Number(claimed?.meta?.changes ?? claimed?.changes ?? 0);
+    if (changes === 0) {
+      stats.skipped += 1;
+      return;
+    }
+
+    try {
+      const request = await buildPushPayload({ data: pushData, options: { ttl: 86400 } }, {
+        endpoint: subscription.endpoint,
+        expirationTime: null,
+        keys: { p256dh: subscription.p256dh_key, auth: subscription.auth_key },
+      }, vapid);
+      const response = await fetch(subscription.endpoint, request);
+      if (response.ok) {
+        stats.sent += 1;
+        await db.prepare(`
+          UPDATE storefront_push_deliveries
+          SET status = 'sent', response_status = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).bind(response.status, deliveryId).run();
+        await db.prepare(`
+          UPDATE storefront_push_subscriptions
+          SET last_success_at = CURRENT_TIMESTAMP, failure_count = 0
+          WHERE id = ?
+        `).bind(subscription.id).run();
+        return;
+      }
+
+      const gone = response.status === 404 || response.status === 410;
+      stats[gone ? 'gone' : 'failed'] += 1;
+      await db.prepare(`
+        UPDATE storefront_push_deliveries
+        SET status = ?, response_status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).bind(gone ? 'gone' : 'failed', response.status, `Push service returned HTTP ${response.status}.`, deliveryId).run();
+      await db.prepare(`
+        UPDATE storefront_push_subscriptions
+        SET active = CASE WHEN ? = 1 THEN 0 ELSE active END,
+            revoked_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE revoked_at END,
+            failure_count = failure_count + 1
+        WHERE id = ?
+      `).bind(gone ? 1 : 0, gone ? 1 : 0, subscription.id).run();
+    } catch (err) {
+      stats.failed += 1;
+      console.error('Browser push delivery error:', err.message);
+      await db.prepare(`
+        UPDATE storefront_push_deliveries
+        SET status = 'failed', error_message = 'Push encryption or delivery failed.', updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).bind(deliveryId).run();
+      await db.prepare('UPDATE storefront_push_subscriptions SET failure_count = failure_count + 1 WHERE id = ?')
+        .bind(subscription.id).run();
+    }
+  };
+
+  for (let index = 0; index < eligible.length; index += 10) {
+    await Promise.all(eligible.slice(index, index + 10).map(deliver));
+  }
+  await db.prepare('UPDATE storefront_notifications SET push_sent_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .bind(campaign.id).run();
+  await db.prepare("DELETE FROM storefront_push_deliveries WHERE created_at < datetime('now', '-90 days')").run().catch(() => {});
+  await db.prepare("DELETE FROM storefront_push_subscriptions WHERE active = 0 AND revoked_at < datetime('now', '-90 days')").run().catch(() => {});
+  return stats;
+}
+
+// GET /api/notifications — anonymous, first-party in-site notification feed.
+app.get('/notifications', async (c) => {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Notifications are temporarily unavailable.' }, 503);
+
+  try {
+    const visitorId = c.req.query('visitor_id');
+    if (!validStorefrontClientId(visitorId)) {
+      return c.json({ success: false, error: 'A valid storefront visitor identifier is required.' }, 400);
+    }
+
+    const visitorHash = await sha256Hex(`storefront-visitor:v1:${visitorId}`);
+    const cartState = await db.prepare(`
+      SELECT product_ids_json, item_count, updated_at
+      FROM storefront_cart_state
+      WHERE visitor_hash = ?
+        AND updated_at > datetime('now', '-30 days')
+    `).bind(visitorHash).first();
+    let productIds = [];
+    try {
+      productIds = cartState ? JSON.parse(cartState.product_ids_json || '[]') : [];
+    } catch {
+      productIds = [];
+    }
+    const cartProductIds = new Set(Array.isArray(productIds) ? productIds : []);
+    const hasActiveCart = Number(cartState?.item_count || 0) > 0;
+
+    const rows = await db.prepare(`
+      SELECT n.*,
+             c.code AS coupon_code,
+             c.active AS coupon_active,
+             c.starts_at AS coupon_starts_at,
+             c.expires_at AS coupon_expires_at,
+             c.max_redemptions AS coupon_max_redemptions,
+             (SELECT COUNT(*) FROM coupon_redemptions cr WHERE cr.coupon_id = c.id) AS coupon_redemptions,
+             r.read_at,
+             r.dismissed_at
+      FROM storefront_notifications n
+      LEFT JOIN coupon_codes c ON c.id = n.coupon_id
+      LEFT JOIN storefront_notification_receipts r
+        ON r.notification_id = n.id AND r.visitor_hash = ?
+      WHERE n.active = 1
+        AND (n.starts_at IS NULL OR datetime(n.starts_at) <= datetime('now'))
+        AND (n.expires_at IS NULL OR datetime(n.expires_at) > datetime('now'))
+      ORDER BY n.created_at DESC
+      LIMIT 30
+    `).bind(visitorHash).all();
+
+    const now = Date.now();
+    const notifications = (rows?.results || []).filter((row) => {
+      if (row.dismissed_at) return false;
+      if (row.audience_type === 'active_cart' && !hasActiveCart) return false;
+      if (row.audience_type === 'product_cart' && !cartProductIds.has(row.product_id)) return false;
+      if (row.coupon_id) {
+        if (!row.coupon_code || Number(row.coupon_active) !== 1) return false;
+        if (row.coupon_starts_at && Date.parse(row.coupon_starts_at) > now) return false;
+        if (row.coupon_expires_at && Date.parse(row.coupon_expires_at) <= now) return false;
+        if (row.coupon_max_redemptions !== null
+          && Number(row.coupon_redemptions || 0) >= Number(row.coupon_max_redemptions)) return false;
+      }
+      return true;
+    }).slice(0, 20).map((row) => ({
+      id: row.id,
+      title: row.title,
+      message: row.message,
+      coupon_code: row.coupon_code || null,
+      cta_label: row.cta_label || null,
+      cta_url: normalizeInternalCtaUrl(row.cta_url, row.coupon_code ? '/checkout' : '/') || '/',
+      is_read: Boolean(row.read_at),
+      created_at: row.created_at,
+    }));
+
+    for (const notification of notifications) {
+      await db.prepare(`
+        INSERT OR IGNORE INTO storefront_notification_receipts
+          (notification_id, visitor_hash, delivered_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+      `).bind(notification.id, visitorHash).run();
+    }
+    await db.prepare("DELETE FROM storefront_notification_receipts WHERE delivered_at < datetime('now', '-90 days')")
+      .run()
+      .catch(() => {});
+
+    return c.json({
+      success: true,
+      notifications,
+      unread_count: notifications.filter((notification) => !notification.is_read).length,
+    });
+  } catch (err) {
+    console.error('Storefront notifications fetch error:', err.message);
+    return c.json({ success: false, error: 'Notifications could not be loaded.' }, 500);
+  }
+});
+
+async function updateNotificationReceipt(c, field) {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Notifications are temporarily unavailable.' }, 503);
+  try {
+    const body = await c.req.json().catch(() => null);
+    const visitorId = body?.visitor_id;
+    const notificationId = c.req.param('id');
+    if (!validStorefrontClientId(visitorId) || !/^ntf_[a-zA-Z0-9_-]{8,80}$/.test(notificationId)) {
+      return c.json({ success: false, error: 'Invalid notification receipt.' }, 400);
+    }
+    const exists = await db.prepare('SELECT id FROM storefront_notifications WHERE id = ?')
+      .bind(notificationId).first();
+    if (!exists) return c.json({ success: false, error: 'Notification not found.' }, 404);
+
+    const visitorHash = await sha256Hex(`storefront-visitor:v1:${visitorId}`);
+    const column = field === 'dismissed_at' ? 'dismissed_at' : 'read_at';
+    await db.prepare(`
+      INSERT INTO storefront_notification_receipts
+        (notification_id, visitor_hash, delivered_at, ${column})
+      VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(notification_id, visitor_hash) DO UPDATE SET
+        ${column} = CURRENT_TIMESTAMP
+    `).bind(notificationId, visitorHash).run();
+    return c.json({ success: true, id: notificationId });
+  } catch (err) {
+    console.error('Storefront notification receipt error:', err.message);
+    return c.json({ success: false, error: 'Notification state could not be updated.' }, 500);
+  }
+}
+
+app.post('/notifications/:id/read', (c) => updateNotificationReceipt(c, 'read_at'));
+app.post('/notifications/:id/dismiss', (c) => updateNotificationReceipt(c, 'dismissed_at'));
+
+// ----------------------------------------------------
 // ADMIN AUTHENTICATION APIS
 // ----------------------------------------------------
 
@@ -2188,7 +3170,7 @@ app.post('/admin/auth/bootstrap', async (c) => {
     return c.json({ success: true, message: 'Super Admin successfully provisioned. You may now log in.' });
   } catch (err) {
     console.error('Bootstrap error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -2305,7 +3287,13 @@ app.post('/admin/auth/login', async (c) => {
     });
   } catch (err) {
     console.error('Login error:', err);
-    return c.json({ success: false, error: 'Server authentication error: ' + err.message }, 500);
+    if (err instanceof UnsupportedPasswordHashError) {
+      return c.json({
+        success: false,
+        error: 'Administrator password reset required. Contact the site owner.',
+      }, 503);
+    }
+    return c.json({ success: false, error: 'Server authentication error.' }, 500);
   }
 });
 
@@ -2466,7 +3454,198 @@ app.get('/admin/dashboard', adminAuthMiddleware, async (c) => {
     });
   } catch (err) {
     console.error('Dashboard API error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
+  }
+});
+
+// GET /api/admin/analytics
+app.get('/admin/analytics', adminAuthMiddleware, async (c) => {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Database unavailable' }, 500);
+
+  const requestedDays = Number.parseInt(c.req.query('days') || '30', 10);
+  const days = [7, 30, 90].includes(requestedDays) ? requestedDays : 30;
+  const since = `-${days} days`;
+
+  try {
+    await db.prepare("DELETE FROM storefront_analytics_events WHERE created_at < datetime('now', '-90 days')").run();
+    await db.prepare("DELETE FROM storefront_cart_state WHERE updated_at < datetime('now', '-90 days')").run();
+
+    const metrics = await db.prepare(`
+      SELECT
+        COUNT(DISTINCT visitor_hash) AS unique_visitors,
+        SUM(CASE WHEN event_type = 'page_view' THEN 1 ELSE 0 END) AS page_views,
+        COUNT(DISTINCT CASE WHEN event_type = 'cart_add' THEN visitor_hash END) AS cart_visitors,
+        SUM(CASE WHEN event_type = 'cart_add' THEN 1 ELSE 0 END) AS cart_additions
+      FROM storefront_analytics_events
+      WHERE created_at >= datetime('now', ?) AND COALESCE(device_type, '') <> 'Bot'
+    `).bind(since).first();
+
+    const dailyRows = await db.prepare(`
+      SELECT
+        date(created_at) AS day,
+        COUNT(DISTINCT visitor_hash) AS unique_visitors,
+        SUM(CASE WHEN event_type = 'page_view' THEN 1 ELSE 0 END) AS page_views,
+        SUM(CASE WHEN event_type = 'cart_add' THEN 1 ELSE 0 END) AS cart_additions
+      FROM storefront_analytics_events
+      WHERE created_at >= datetime('now', ?) AND COALESCE(device_type, '') <> 'Bot'
+      GROUP BY date(created_at)
+      ORDER BY day ASC
+    `).bind(since).all();
+
+    const popularRows = await db.prepare(`
+      SELECT product_id, COUNT(*) AS cart_additions, COUNT(DISTINCT visitor_hash) AS unique_visitors
+      FROM storefront_analytics_events
+      WHERE event_type = 'cart_add' AND created_at >= datetime('now', ?) AND COALESCE(device_type, '') <> 'Bot'
+      GROUP BY product_id
+      ORDER BY cart_additions DESC, product_id ASC
+      LIMIT 25
+    `).bind(since).all();
+
+    const sourceRows = await db.prepare(`
+      SELECT COALESCE(NULLIF(referrer_host, ''), 'Direct') AS referrer_host,
+             COUNT(DISTINCT session_hash) AS sessions,
+             COUNT(DISTINCT visitor_hash) AS unique_visitors,
+             SUM(CASE WHEN event_type = 'page_view' THEN 1 ELSE 0 END) AS page_views,
+             COUNT(DISTINCT CASE WHEN event_type = 'cart_add' THEN visitor_hash END) AS cart_visitors,
+             SUM(CASE WHEN event_type = 'cart_add' THEN 1 ELSE 0 END) AS cart_additions
+      FROM storefront_analytics_events
+      WHERE created_at >= datetime('now', ?) AND COALESCE(device_type, '') <> 'Bot'
+      GROUP BY COALESCE(NULLIF(referrer_host, ''), 'Direct')
+      ORDER BY sessions DESC, unique_visitors DESC, referrer_host ASC
+      LIMIT 30
+    `).bind(since).all();
+
+    const recentRows = await db.prepare(`
+      SELECT visitor_hash, product_id, page_path, referrer_host, ip_network,
+             country_code, region, city, device_type, browser_family, os_family, created_at
+      FROM storefront_analytics_events
+      WHERE event_type = 'cart_add' AND created_at >= datetime('now', ?) AND COALESCE(device_type, '') <> 'Bot'
+      ORDER BY created_at DESC
+      LIMIT 75
+    `).bind(since).all();
+
+    const locationRows = await db.prepare(`
+      SELECT country_code, region, city,
+             COUNT(DISTINCT visitor_hash) AS unique_visitors,
+             COUNT(DISTINCT CASE WHEN event_type = 'cart_add' THEN visitor_hash END) AS cart_visitors,
+             SUM(CASE WHEN event_type = 'cart_add' THEN 1 ELSE 0 END) AS cart_additions
+      FROM storefront_analytics_events
+      WHERE created_at >= datetime('now', ?) AND COALESCE(device_type, '') <> 'Bot'
+      GROUP BY country_code, region, city
+      ORDER BY cart_visitors DESC, unique_visitors DESC, country_code ASC
+      LIMIT 30
+    `).bind(since).all();
+
+    const activeCartRows = await db.prepare(`
+      SELECT visitor_hash, product_ids_json, item_count, cart_value_cents, page_path,
+             referrer_host, ip_network, country_code, region, city,
+             device_type, browser_family, os_family, updated_at
+      FROM storefront_cart_state
+      WHERE item_count > 0 AND updated_at >= datetime('now', ?)
+        AND COALESCE(device_type, '') <> 'Bot'
+      ORDER BY updated_at DESC
+      LIMIT 75
+    `).bind(since).all();
+
+    const uniqueVisitors = Number(metrics?.unique_visitors || 0);
+    const cartVisitors = Number(metrics?.cart_visitors || 0);
+    const cartAdditions = Number(metrics?.cart_additions || 0);
+    const activeCarts = activeCartRows?.results || [];
+
+    return c.json({
+      success: true,
+      data: {
+        range_days: days,
+        metrics: {
+          unique_visitors: uniqueVisitors,
+          page_views: Number(metrics?.page_views || 0),
+          cart_visitors: cartVisitors,
+          cart_additions: cartAdditions,
+          active_carts: activeCarts.length,
+          cart_visitor_rate: uniqueVisitors > 0 ? Number(((cartVisitors / uniqueVisitors) * 100).toFixed(1)) : 0,
+        },
+        daily: (dailyRows?.results || []).map((row) => ({
+          day: row.day,
+          unique_visitors: Number(row.unique_visitors || 0),
+          page_views: Number(row.page_views || 0),
+          cart_additions: Number(row.cart_additions || 0),
+        })),
+        popular_flows: (popularRows?.results || []).map((row) => ({
+          product_id: row.product_id,
+          title: AUTHORITATIVE_CATALOG_MAP.get(row.product_id)?.title || row.product_id,
+          cart_additions: Number(row.cart_additions || 0),
+          unique_visitors: Number(row.unique_visitors || 0),
+          share: cartAdditions > 0 ? Number(((Number(row.cart_additions || 0) / cartAdditions) * 100).toFixed(1)) : 0,
+        })),
+        traffic_sources: (sourceRows?.results || []).map((row) => ({
+          referrer_host: row.referrer_host || 'Direct',
+          sessions: Number(row.sessions || 0),
+          unique_visitors: Number(row.unique_visitors || 0),
+          page_views: Number(row.page_views || 0),
+          cart_visitors: Number(row.cart_visitors || 0),
+          cart_additions: Number(row.cart_additions || 0),
+        })),
+        locations: (locationRows?.results || []).map((row) => {
+          const locationVisitors = Number(row.unique_visitors || 0);
+          const locationCartVisitors = Number(row.cart_visitors || 0);
+          return {
+            country_code: row.country_code,
+            region: row.region,
+            city: row.city,
+            unique_visitors: locationVisitors,
+            cart_visitors: locationCartVisitors,
+            cart_additions: Number(row.cart_additions || 0),
+            cart_visitor_rate: locationVisitors > 0
+              ? Number(((locationCartVisitors / locationVisitors) * 100).toFixed(1))
+              : 0,
+          };
+        }),
+        active_carts: activeCarts.map((row) => {
+          let productIds = [];
+          try { productIds = JSON.parse(row.product_ids_json || '[]'); } catch (error) {}
+          return {
+            visitor_id: String(row.visitor_hash || '').slice(0, 12),
+            item_count: Number(row.item_count || 0),
+            cart_value_usd: Number((Number(row.cart_value_cents || 0) / 100).toFixed(2)),
+            items: productIds.map((productId) => ({
+              product_id: productId,
+              title: AUTHORITATIVE_CATALOG_MAP.get(productId)?.title || productId,
+            })),
+            page_path: row.page_path,
+            referrer_host: row.referrer_host,
+            ip_network: row.ip_network,
+            country_code: row.country_code,
+            region: row.region,
+            city: row.city,
+            device_type: row.device_type,
+            browser_family: row.browser_family,
+            os_family: row.os_family,
+            updated_at: row.updated_at,
+          };
+        }),
+        recent_cart_additions: (recentRows?.results || []).map((row) => ({
+          visitor_id: String(row.visitor_hash || '').slice(0, 12),
+          product_id: row.product_id,
+          title: AUTHORITATIVE_CATALOG_MAP.get(row.product_id)?.title || row.product_id,
+          page_path: row.page_path,
+          referrer_host: row.referrer_host,
+          ip_network: row.ip_network,
+          country_code: row.country_code,
+          region: row.region,
+          city: row.city,
+          device_type: row.device_type,
+          browser_family: row.browser_family,
+          os_family: row.os_family,
+          created_at: row.created_at,
+        })),
+        retention_days: 90,
+        synced_at: new Date().toISOString(),
+      },
+    });
+  } catch (err) {
+    console.error('Admin analytics API error:', err);
+    return c.json({ success: false, error: 'Analytics dashboard could not be loaded.' }, 500);
   }
 });
 
@@ -2526,7 +3705,8 @@ app.get('/admin/orders', adminAuthMiddleware, async (c) => {
     const total = Number(countRow?.total || 0);
 
     const rows = await db.prepare(`
-      SELECT o.id, o.customer_email, o.total_usd, o.delivery_method, o.workflow_subtotal, o.setup_fee, o.status, o.items, o.fulfillment_status, o.delivered_at, o.created_at, o.updated_at,
+      SELECT o.id, o.customer_email, o.total_usd, o.delivery_method, o.workflow_subtotal, o.setup_fee,
+             o.coupon_code, o.coupon_discount_usd, o.status, o.items, o.fulfillment_status, o.delivered_at, o.created_at, o.updated_at,
              p.id as payment_id, p.currency as payment_currency, p.status as payment_status, p.pay_amount_crypto, p.tx_hash, p.verification_source
       FROM orders o
       LEFT JOIN crypto_payments p ON o.id = p.order_id
@@ -2545,6 +3725,7 @@ app.get('/admin/orders', adminAuthMiddleware, async (c) => {
         delivery_method: row.delivery_method || 'download_package',
         workflow_subtotal: Number(row.workflow_subtotal || row.total_usd || 0),
         setup_fee: Number(row.setup_fee || 0),
+        coupon_discount_usd: Number(row.coupon_discount_usd || 0),
         itemsCount: itemsList.length,
         itemsSummary: itemsList.map((i) => i.title).join(', '),
       };
@@ -2562,7 +3743,7 @@ app.get('/admin/orders', adminAuthMiddleware, async (c) => {
     });
   } catch (err) {
     console.error('Admin orders API error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -2630,7 +3811,7 @@ app.get('/admin/orders/:id', adminAuthMiddleware, async (c) => {
     });
   } catch (err) {
     console.error('Order detail API error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -2693,7 +3874,7 @@ app.post('/admin/orders/:id/transition', adminAuthMiddleware, async (c) => {
     return c.json({ success: true, orderId, previousStatus: currentStatus, status: target_status });
   } catch (err) {
     console.error('Order status transition error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -2727,16 +3908,46 @@ app.post('/admin/orders/:id/fulfillment-status', adminAuthMiddleware, async (c) 
       }, 400);
     }
 
-    const order = await db.prepare('SELECT fulfillment_status, delivery_method, customer_email FROM orders WHERE id = ?').bind(orderId).first();
+    const order = await db.prepare(
+      `SELECT o.status, o.fulfillment_status, o.delivery_method, o.customer_email,
+              p.status AS payment_status
+       FROM orders o
+       LEFT JOIN crypto_payments p ON p.order_id = o.id
+       WHERE o.id = ?`
+    ).bind(orderId).first();
     if (!order) {
       return c.json({ success: false, error: `Order "${orderId}" not found.` }, 404);
+    }
+
+    if (!SETTLED_ORDER_STATUSES.has(String(order.status || '').toLowerCase())
+        || !CONFIRMED_PROVIDER_STATUSES.has(String(order.payment_status || '').toLowerCase())) {
+      return c.json({
+        success: false,
+        error: `Fulfillment is locked while order status is "${order.status}" and payment status is "${order.payment_status || 'missing'}". Confirm payment before updating delivery.`,
+      }, 409);
+    }
+
+    const deliveryTransitions = ALLOWED_FULFILLMENT_TRANSITIONS[order.delivery_method] || {};
+    const allowedNext = deliveryTransitions[order.fulfillment_status || 'not_ready'] || [];
+    if (!allowedNext.includes(target_status)) {
+      return c.json({
+        success: false,
+        error: `Invalid fulfillment transition from "${order.fulfillment_status || 'not_ready'}" to "${target_status}". Allowed: [${allowedNext.join(', ')}].`,
+      }, 400);
     }
 
     const previousStatus = order.fulfillment_status;
 
     await db.prepare(
-      'UPDATE orders SET fulfillment_status = ?, fulfillment_notes = COALESCE(?, fulfillment_notes), updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-    ).bind(target_status, notes || null, orderId).run();
+      `UPDATE orders
+       SET fulfillment_status = ?, fulfillment_notes = COALESCE(?, fulfillment_notes),
+           delivered_at = CASE
+             WHEN ? IN ('package_delivered', 'setup_completed') THEN COALESCE(delivered_at, CURRENT_TIMESTAMP)
+             ELSE delivered_at
+           END,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`
+    ).bind(target_status, notes || null, target_status, orderId).run();
 
     await recordAuditLog(db, {
       adminId: user.id,
@@ -2759,7 +3970,7 @@ app.post('/admin/orders/:id/fulfillment-status', adminAuthMiddleware, async (c) 
     });
   } catch (err) {
     console.error('Fulfillment status update error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -2831,7 +4042,7 @@ app.get('/admin/payments', adminAuthMiddleware, async (c) => {
     });
   } catch (err) {
     console.error('Admin payments API error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -2867,7 +4078,8 @@ app.post('/admin/payments/:id/sync', adminAuthMiddleware, async (c) => {
     }
 
     const order = await db.prepare(
-      `SELECT id, total_usd, total_usd_cents, delivery_method FROM orders WHERE id = ?`
+      `SELECT id, status, fulfillment_status, total_usd, total_usd_cents, delivery_method
+       FROM orders WHERE id = ?`
     ).bind(payment.order_id).first();
     const snapshotVerification = verifyProviderInvoiceSnapshot(nowPayData, {
       paymentId: payment.id,
@@ -2894,11 +4106,7 @@ app.post('/admin/payments/:id/sync', adminAuthMiddleware, async (c) => {
     const liveTxHash = nowPayData.outcome_tx_hash || nowPayData.txid || payment.tx_hash;
 
     if (db) {
-      await db.prepare(
-        'UPDATE crypto_payments SET status = ?, tx_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-      ).bind(liveStatus, liveTxHash, actualPayId).run();
-
-      if (['confirmed', 'finished', 'paid'].includes(liveStatus)) {
+      if (CONFIRMED_PROVIDER_STATUSES.has(liveStatus)) {
         const reconciliation = reconcileProviderPayment(nowPayData, payment, order);
         if (!reconciliation.valid) {
           await db.prepare(
@@ -2908,12 +4116,27 @@ app.post('/admin/payments/:id/sync', adminAuthMiddleware, async (c) => {
           ).bind(actualPayId).run();
           return c.json({ success: false, error: reconciliation.reason, status: 'review_required' }, 409);
         }
-
-        const fulfillmentStatus = order.delivery_method === 'geelark_setup' ? 'setup_pending' : 'fulfillment_pending';
-        await db.prepare(
-          'UPDATE orders SET status = ?, fulfillment_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-        ).bind('paid', fulfillmentStatus, payment.order_id).run();
       }
+
+      const derivedState = deriveOrderStateFromPayment({
+        orderStatus: order.status,
+        fulfillmentStatus: order.fulfillment_status,
+        paymentStatus: liveStatus,
+        deliveryMethod: order.delivery_method,
+      });
+      const syncStatements = [
+        db.prepare(
+          'UPDATE crypto_payments SET status = ?, tx_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        ).bind(liveStatus, liveTxHash, actualPayId),
+      ];
+      if (derivedState.changed) {
+        syncStatements.push(
+          db.prepare(
+            'UPDATE orders SET status = ?, fulfillment_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+          ).bind(derivedState.orderStatus, derivedState.fulfillmentStatus, payment.order_id)
+        );
+      }
+      await db.batch(syncStatements);
 
       await recordAuditLog(db, {
         adminId: user.id,
@@ -2927,18 +4150,39 @@ app.post('/admin/payments/:id/sync', adminAuthMiddleware, async (c) => {
         newState: liveStatus,
         metadata: { liveTxHash },
       });
+
+      if (derivedState.changed) {
+        await recordAuditLog(db, {
+          adminId: user.id,
+          adminEmail: user.email,
+          ip: c.req.header('cf-connecting-ip') || '127.0.0.1',
+          userAgent: c.req.header('user-agent'),
+          action: 'ORDER_STATUS_RECONCILED',
+          entityType: 'order',
+          entityId: order.id,
+          previousState: order.status,
+          newState: derivedState.orderStatus,
+          reason: `Gateway sync reported ${liveStatus}`,
+          metadata: { paymentId: actualPayId, source: 'admin_sync' },
+        });
+      }
+
+      return c.json({
+        success: true,
+        paymentId: actualPayId,
+        status: liveStatus,
+        orderStatus: derivedState.orderStatus,
+        previousOrderStatus: order.status,
+        orderReconciled: derivedState.changed,
+        txHash: liveTxHash,
+        gatewayData: nowPayData,
+      });
     }
 
-    return c.json({
-      success: true,
-      paymentId: actualPayId,
-      status: liveStatus,
-      txHash: liveTxHash,
-      gatewayData: nowPayData,
-    });
+    return c.json({ success: false, error: 'Database unavailable.' }, 500);
   } catch (err) {
     console.error('Payment sync error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -3003,7 +4247,7 @@ app.post('/admin/payments/:id/manual-verify', adminAuthMiddleware, requireRole('
     });
   } catch (err) {
     console.error('Manual payment verify error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -3030,7 +4274,7 @@ app.get('/admin/fulfillment', adminAuthMiddleware, async (c) => {
     return c.json({ success: true, fulfillment_queue: rows?.results || [] });
   } catch (err) {
     console.error('Fulfillment queue API error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -3050,11 +4294,14 @@ app.post('/admin/fulfillment/:orderId/resend', adminAuthMiddleware, async (c) =>
       return c.json({ success: false, error: `Order "${orderId}" not found.` }, 404);
     }
 
-    if (!['paid', 'processing', 'completed'].includes(order.status)) {
-      return c.json({ success: false, error: `Cannot fulfill order with status "${order.status}". Order must be paid.` }, 400);
+    const payment = await db.prepare('SELECT currency, status FROM crypto_payments WHERE order_id = ?').bind(orderId).first();
+    if (!SETTLED_ORDER_STATUSES.has(String(order.status || '').toLowerCase())
+        || !CONFIRMED_PROVIDER_STATUSES.has(String(payment?.status || '').toLowerCase())) {
+      return c.json({
+        success: false,
+        error: `Cannot fulfill order with order status "${order.status}" and payment status "${payment?.status || 'missing'}". Confirm payment first.`,
+      }, 409);
     }
-
-    const payment = await db.prepare('SELECT currency FROM crypto_payments WHERE order_id = ?').bind(orderId).first();
 
     let parsedItems = [];
     try {
@@ -3184,7 +4431,7 @@ app.post('/admin/fulfillment/:orderId/resend', adminAuthMiddleware, async (c) =>
     }
   } catch (err) {
     console.error('Resend fulfillment error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -3229,7 +4476,382 @@ app.get('/admin/workflows', adminAuthMiddleware, async (c) => {
     return c.json({ success: true, workflows: enrichedCatalog });
   } catch (err) {
     console.error('Workflows catalog API error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
+  }
+});
+
+// ----------------------------------------------------
+// ADMIN COUPON MANAGEMENT APIS
+// ----------------------------------------------------
+
+// GET /api/admin/coupons
+app.get('/admin/coupons', adminAuthMiddleware, async (c) => {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Database unavailable' }, 500);
+
+  try {
+    const rows = await db.prepare(`
+      SELECT c.*,
+             (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.coupon_id = c.id) AS redemption_count
+      FROM coupon_codes c
+      ORDER BY c.created_at DESC
+    `).all();
+
+    return c.json({
+      success: true,
+      coupons: (rows?.results || []).map((coupon) => ({
+        ...coupon,
+        active: Number(coupon.active) === 1,
+        discount_value_display: coupon.discount_type === 'percentage'
+          ? `${Number(coupon.discount_value)}%`
+          : `$${(Number(coupon.discount_value) / 100).toFixed(2)}`,
+        min_subtotal_usd: Number(coupon.min_subtotal_cents || 0) / 100,
+        redemption_count: Number(coupon.redemption_count || 0),
+      })),
+    });
+  } catch (err) {
+    console.error('Admin coupons fetch error:', err.message);
+    return c.json({ success: false, error: 'Coupons could not be loaded.' }, 500);
+  }
+});
+
+// POST /api/admin/coupons
+app.post('/admin/coupons', adminAuthMiddleware, requireRole('SUPER_ADMIN'), async (c) => {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Database unavailable' }, 500);
+  const user = c.get('adminUser');
+
+  try {
+    const body = await c.req.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return c.json({ success: false, error: 'Invalid coupon request.' }, 400);
+    }
+
+    const code = normalizeCouponCode(body.code);
+    const description = String(body.description || '').trim().slice(0, 120) || null;
+    const discountType = String(body.discount_type || '').trim();
+    const submittedValue = Number(body.discount_value);
+    const minSubtotalUsd = Number(body.min_subtotal_usd || 0);
+    const maxRedemptions = body.max_redemptions === '' || body.max_redemptions === null || body.max_redemptions === undefined
+      ? null
+      : Number(body.max_redemptions);
+
+    if (!isValidCouponCodeFormat(code)) {
+      return c.json({ success: false, error: 'Code must be 3–32 characters using letters, numbers, hyphens, or underscores.' }, 400);
+    }
+    if (!['percentage', 'fixed_amount'].includes(discountType)) {
+      return c.json({ success: false, error: 'Discount type must be percentage or fixed amount.' }, 400);
+    }
+    if (!Number.isFinite(submittedValue) || submittedValue <= 0) {
+      return c.json({ success: false, error: 'Discount value must be greater than zero.' }, 400);
+    }
+
+    let storedDiscountValue;
+    if (discountType === 'percentage') {
+      if (!Number.isInteger(submittedValue) || submittedValue > 100) {
+        return c.json({ success: false, error: 'Percentage discounts must be a whole number from 1 to 100.' }, 400);
+      }
+      storedDiscountValue = submittedValue;
+    } else {
+      storedDiscountValue = usdToCents(submittedValue);
+      if (storedDiscountValue <= 0 || storedDiscountValue > 100000000) {
+        return c.json({ success: false, error: 'Fixed discount amount is outside the supported range.' }, 400);
+      }
+    }
+
+    if (!Number.isFinite(minSubtotalUsd) || minSubtotalUsd < 0) {
+      return c.json({ success: false, error: 'Minimum subtotal cannot be negative.' }, 400);
+    }
+    if (maxRedemptions !== null && (!Number.isInteger(maxRedemptions) || maxRedemptions < 1 || maxRedemptions > 1000000)) {
+      return c.json({ success: false, error: 'Usage limit must be a whole number between 1 and 1,000,000.' }, 400);
+    }
+
+    const parseOptionalDate = (value) => {
+      if (!value) return null;
+      const timestamp = Date.parse(value);
+      return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+    };
+    const startsAt = parseOptionalDate(body.starts_at);
+    const expiresAt = parseOptionalDate(body.expires_at);
+    if (body.starts_at && !startsAt) return c.json({ success: false, error: 'Start date is invalid.' }, 400);
+    if (body.expires_at && !expiresAt) return c.json({ success: false, error: 'Expiry date is invalid.' }, 400);
+    if (startsAt && expiresAt && Date.parse(expiresAt) <= Date.parse(startsAt)) {
+      return c.json({ success: false, error: 'Expiry date must be later than the start date.' }, 400);
+    }
+
+    const couponId = 'cpn_' + generateSecureToken(10);
+    await db.prepare(`
+      INSERT INTO coupon_codes
+        (id, code, description, discount_type, discount_value, min_subtotal_cents,
+         max_redemptions, active, starts_at, expires_at, created_by_admin_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      couponId,
+      code,
+      description,
+      discountType,
+      storedDiscountValue,
+      usdToCents(minSubtotalUsd),
+      maxRedemptions,
+      body.active === false ? 0 : 1,
+      startsAt,
+      expiresAt,
+      user?.id || null,
+    ).run();
+
+    await recordAuditLog(db, {
+      adminId: user?.id,
+      adminEmail: user?.email,
+      ip: c.req.header('cf-connecting-ip') || '127.0.0.1',
+      userAgent: c.req.header('user-agent'),
+      action: 'COUPON_CREATED',
+      entityType: 'coupon',
+      entityId: couponId,
+      newState: code,
+      metadata: { discountType, discountValue: storedDiscountValue, maxRedemptions },
+    });
+
+    return c.json({ success: true, message: `Coupon ${code} created.`, id: couponId, code }, 201);
+  } catch (err) {
+    console.error('Admin coupon creation error:', err.message);
+    if (/unique|constraint/i.test(err.message || '')) {
+      return c.json({ success: false, error: 'A coupon with this code already exists.' }, 409);
+    }
+    return c.json({ success: false, error: 'Coupon could not be created.' }, 500);
+  }
+});
+
+// PATCH /api/admin/coupons/:id — activation is the only mutable property;
+// financial terms remain immutable once created for reliable order auditing.
+app.patch('/admin/coupons/:id', adminAuthMiddleware, requireRole('SUPER_ADMIN'), async (c) => {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Database unavailable' }, 500);
+  const user = c.get('adminUser');
+  const couponId = c.req.param('id');
+
+  try {
+    const body = await c.req.json().catch(() => null);
+    if (!body || typeof body.active !== 'boolean') {
+      return c.json({ success: false, error: 'The active field must be true or false.' }, 400);
+    }
+    const existing = await db.prepare('SELECT id, code, active FROM coupon_codes WHERE id = ?').bind(couponId).first();
+    if (!existing) return c.json({ success: false, error: 'Coupon not found.' }, 404);
+
+    await db.prepare('UPDATE coupon_codes SET active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind(body.active ? 1 : 0, couponId)
+      .run();
+
+    await recordAuditLog(db, {
+      adminId: user?.id,
+      adminEmail: user?.email,
+      ip: c.req.header('cf-connecting-ip') || '127.0.0.1',
+      userAgent: c.req.header('user-agent'),
+      action: body.active ? 'COUPON_ACTIVATED' : 'COUPON_DEACTIVATED',
+      entityType: 'coupon',
+      entityId: couponId,
+      previousState: Number(existing.active) === 1 ? 'active' : 'inactive',
+      newState: body.active ? 'active' : 'inactive',
+    });
+
+    return c.json({ success: true, id: couponId, code: existing.code, active: body.active });
+  } catch (err) {
+    console.error('Admin coupon update error:', err.message);
+    return c.json({ success: false, error: 'Coupon status could not be updated.' }, 500);
+  }
+});
+
+// ----------------------------------------------------
+// ADMIN IN-SITE NOTIFICATION CAMPAIGNS
+// ----------------------------------------------------
+
+app.get('/admin/notifications', adminAuthMiddleware, async (c) => {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Database unavailable' }, 500);
+  try {
+    const rows = await db.prepare(`
+      SELECT n.*,
+             c.code AS coupon_code,
+             (SELECT COUNT(*) FROM storefront_notification_receipts r WHERE r.notification_id = n.id) AS delivered_count,
+             (SELECT COUNT(*) FROM storefront_notification_receipts r WHERE r.notification_id = n.id AND r.read_at IS NOT NULL) AS read_count,
+             (SELECT COUNT(*) FROM storefront_notification_receipts r WHERE r.notification_id = n.id AND r.dismissed_at IS NOT NULL) AS dismissed_count,
+             (SELECT COUNT(*) FROM storefront_push_deliveries p WHERE p.notification_id = n.id AND p.status = 'sent') AS push_sent_count,
+             (SELECT COUNT(*) FROM storefront_push_deliveries p WHERE p.notification_id = n.id AND p.status = 'failed') AS push_failed_count,
+             (SELECT COUNT(*) FROM storefront_push_deliveries p WHERE p.notification_id = n.id AND p.status = 'gone') AS push_gone_count
+      FROM storefront_notifications n
+      LEFT JOIN coupon_codes c ON c.id = n.coupon_id
+      ORDER BY n.created_at DESC
+    `).all();
+    const subscriberRow = await db.prepare('SELECT COUNT(*) AS count FROM storefront_push_subscriptions WHERE active = 1').first();
+    return c.json({
+      success: true,
+      push_configured: webPushConfigured(c.env),
+      active_push_subscribers: Number(subscriberRow?.count || 0),
+      notifications: (rows?.results || []).map((row) => ({
+        ...row,
+        active: Number(row.active) === 1,
+        push_enabled: Number(row.push_enabled) === 1,
+        delivered_count: Number(row.delivered_count || 0),
+        read_count: Number(row.read_count || 0),
+        dismissed_count: Number(row.dismissed_count || 0),
+        push_sent_count: Number(row.push_sent_count || 0),
+        push_failed_count: Number(row.push_failed_count || 0),
+        push_gone_count: Number(row.push_gone_count || 0),
+      })),
+    });
+  } catch (err) {
+    console.error('Admin notification fetch error:', err.message);
+    return c.json({ success: false, error: 'Notification campaigns could not be loaded.' }, 500);
+  }
+});
+
+app.post('/admin/notifications', adminAuthMiddleware, requireRole('SUPER_ADMIN'), async (c) => {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Database unavailable' }, 500);
+  const user = c.get('adminUser');
+  try {
+    const body = await c.req.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return c.json({ success: false, error: 'Invalid notification request.' }, 400);
+    }
+
+    const title = String(body.title || '').trim();
+    const message = String(body.message || '').trim();
+    const audienceType = String(body.audience_type || '').trim();
+    const productId = String(body.product_id || '').trim() || null;
+    const couponId = String(body.coupon_id || '').trim() || null;
+    const ctaLabel = String(body.cta_label || '').trim() || null;
+    const ctaUrl = normalizeInternalCtaUrl(body.cta_url, couponId ? '/checkout' : '/');
+    const pushEnabled = body.push_enabled === true;
+
+    if (title.length < 3 || title.length > 80) {
+      return c.json({ success: false, error: 'Title must contain 3–80 characters.' }, 400);
+    }
+    if (message.length < 5 || message.length > 280) {
+      return c.json({ success: false, error: 'Message must contain 5–280 characters.' }, 400);
+    }
+    if (!['all', 'active_cart', 'product_cart'].includes(audienceType)) {
+      return c.json({ success: false, error: 'Choose a valid notification audience.' }, 400);
+    }
+    if (audienceType === 'product_cart' && !AUTHORITATIVE_CATALOG_MAP.has(productId)) {
+      return c.json({ success: false, error: 'Choose a valid flow for product-cart targeting.' }, 400);
+    }
+    if (ctaLabel && (ctaLabel.length < 2 || ctaLabel.length > 40)) {
+      return c.json({ success: false, error: 'CTA label must contain 2–40 characters.' }, 400);
+    }
+    if (ctaUrl === null) {
+      return c.json({ success: false, error: 'CTA URL must be an internal path beginning with one slash.' }, 400);
+    }
+    if (pushEnabled && !webPushConfigured(c.env)) {
+      return c.json({ success: false, error: 'Browser push keys are not configured.' }, 503);
+    }
+    if (pushEnabled && body.active === false) {
+      return c.json({ success: false, error: 'Activate the campaign before sending browser push.' }, 400);
+    }
+
+    if (couponId) {
+      const coupon = await db.prepare('SELECT id FROM coupon_codes WHERE id = ?').bind(couponId).first();
+      if (!coupon) return c.json({ success: false, error: 'Selected coupon was not found.' }, 400);
+    }
+
+    const parseOptionalDate = (value) => {
+      if (!value) return null;
+      const timestamp = Date.parse(value);
+      return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+    };
+    const startsAt = parseOptionalDate(body.starts_at);
+    const expiresAt = parseOptionalDate(body.expires_at);
+    if (body.starts_at && !startsAt) return c.json({ success: false, error: 'Start date is invalid.' }, 400);
+    if (body.expires_at && !expiresAt) return c.json({ success: false, error: 'Expiry date is invalid.' }, 400);
+    if (startsAt && expiresAt && Date.parse(expiresAt) <= Date.parse(startsAt)) {
+      return c.json({ success: false, error: 'Expiry date must be later than the start date.' }, 400);
+    }
+    if (pushEnabled && startsAt && Date.parse(startsAt) > Date.now() + 60000) {
+      return c.json({ success: false, error: 'Browser push sends immediately. Remove the future start time or turn off browser push.' }, 400);
+    }
+
+    const notificationId = 'ntf_' + generateSecureToken(10);
+    await db.prepare(`
+      INSERT INTO storefront_notifications
+        (id, title, message, audience_type, product_id, coupon_id, cta_label,
+         cta_url, push_enabled, active, starts_at, expires_at, created_by_admin_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      notificationId,
+      title,
+      message,
+      audienceType,
+      audienceType === 'product_cart' ? productId : null,
+      couponId,
+      ctaLabel,
+      ctaUrl,
+      pushEnabled ? 1 : 0,
+      body.active === false ? 0 : 1,
+      startsAt,
+      expiresAt,
+      user?.id || null,
+    ).run();
+
+    await recordAuditLog(db, {
+      adminId: user?.id,
+      adminEmail: user?.email,
+      ip: c.req.header('cf-connecting-ip') || '127.0.0.1',
+      userAgent: c.req.header('user-agent'),
+      action: 'STOREFRONT_NOTIFICATION_CREATED',
+      entityType: 'notification',
+      entityId: notificationId,
+      newState: title,
+      metadata: { audienceType, productId: audienceType === 'product_cart' ? productId : null, couponId, pushEnabled },
+    });
+
+    const push = pushEnabled
+      ? await sendBrowserPushCampaign(db, c.env, notificationId)
+      : { sent: 0, failed: 0, gone: 0, skipped: 0 };
+    const pushSummary = pushEnabled
+      ? ` Browser push: ${push.sent} sent, ${push.failed + push.gone} failed or expired.`
+      : '';
+    return c.json({
+      success: true,
+      id: notificationId,
+      message: `In-site notification campaign created.${pushSummary}`,
+      push,
+    }, 201);
+  } catch (err) {
+    console.error('Admin notification creation error:', err.message);
+    return c.json({ success: false, error: 'Notification campaign could not be created.' }, 500);
+  }
+});
+
+app.patch('/admin/notifications/:id', adminAuthMiddleware, requireRole('SUPER_ADMIN'), async (c) => {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Database unavailable' }, 500);
+  const user = c.get('adminUser');
+  const notificationId = c.req.param('id');
+  try {
+    const body = await c.req.json().catch(() => null);
+    if (!body || typeof body.active !== 'boolean') {
+      return c.json({ success: false, error: 'The active field must be true or false.' }, 400);
+    }
+    const existing = await db.prepare('SELECT id, title, active FROM storefront_notifications WHERE id = ?')
+      .bind(notificationId).first();
+    if (!existing) return c.json({ success: false, error: 'Notification campaign not found.' }, 404);
+
+    await db.prepare('UPDATE storefront_notifications SET active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind(body.active ? 1 : 0, notificationId).run();
+    await recordAuditLog(db, {
+      adminId: user?.id,
+      adminEmail: user?.email,
+      ip: c.req.header('cf-connecting-ip') || '127.0.0.1',
+      userAgent: c.req.header('user-agent'),
+      action: body.active ? 'STOREFRONT_NOTIFICATION_ACTIVATED' : 'STOREFRONT_NOTIFICATION_DEACTIVATED',
+      entityType: 'notification',
+      entityId: notificationId,
+      previousState: Number(existing.active) === 1 ? 'active' : 'inactive',
+      newState: body.active ? 'active' : 'inactive',
+    });
+    return c.json({ success: true, id: notificationId, active: body.active });
+  } catch (err) {
+    console.error('Admin notification update error:', err.message);
+    return c.json({ success: false, error: 'Notification status could not be updated.' }, 500);
   }
 });
 
@@ -3258,7 +4880,7 @@ app.get('/admin/customers', adminAuthMiddleware, async (c) => {
     return c.json({ success: true, customers: rows?.results || [] });
   } catch (err) {
     console.error('Customers API error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -3302,7 +4924,7 @@ app.get('/admin/customers/:email', adminAuthMiddleware, async (c) => {
     });
   } catch (err) {
     console.error('Customer profile API error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -3381,7 +5003,7 @@ app.get('/admin/mail', adminAuthMiddleware, async (c) => {
     });
   } catch (err) {
     console.error('Admin mail list error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -3463,7 +5085,7 @@ app.get('/admin/mail/:id', adminAuthMiddleware, async (c) => {
     });
   } catch (err) {
     console.error('Admin email detail error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -3529,7 +5151,8 @@ app.patch('/admin/mail/:id/read', adminAuthMiddleware, async (c) => {
     await db.prepare('UPDATE inbound_emails SET is_read = ? WHERE id = ?').bind(isRead, emailId).run();
     return c.json({ success: true, emailId, is_read: isRead });
   } catch (err) {
-    return c.json({ success: false, error: err.message }, 500);
+    console.error('Mail read-state update error:', err.message);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -3546,7 +5169,8 @@ app.patch('/admin/mail/:id/archive', adminAuthMiddleware, async (c) => {
     await db.prepare('UPDATE inbound_emails SET is_archived = ? WHERE id = ?').bind(isArchived, emailId).run();
     return c.json({ success: true, emailId, is_archived: isArchived });
   } catch (err) {
-    return c.json({ success: false, error: err.message }, 500);
+    console.error('Mail archive-state update error:', err.message);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -3590,7 +5214,8 @@ app.post('/admin/mail/:id/link-order', adminAuthMiddleware, async (c) => {
 
     return c.json({ success: true, emailId, order_id: targetOrderId });
   } catch (err) {
-    return c.json({ success: false, error: err.message }, 500);
+    console.error('Mail order-link update error:', err.message);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -3673,7 +5298,7 @@ app.post('/admin/mail/:id/reply', adminAuthMiddleware, async (c) => {
     return c.json({ success: true, message: `Reply sent successfully to ${email.from_address}`, data: resData });
   } catch (err) {
     console.error('Email reply send error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -3730,7 +5355,7 @@ app.get('/admin/activity', adminAuthMiddleware, async (c) => {
     });
   } catch (err) {
     console.error('Activity API error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -3827,7 +5452,7 @@ app.post('/admin/resend/diagnostics', adminAuthMiddleware, requireRole('SUPER_AD
     });
   } catch (err) {
     console.error('Resend diagnostics error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -3882,7 +5507,7 @@ app.post('/admin/resend/ensure-webhook', adminAuthMiddleware, requireRole('SUPER
     });
   } catch (err) {
     console.error('Ensure webhook error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -3926,7 +5551,7 @@ app.post('/admin/resend/send-test-inbound', adminAuthMiddleware, requireRole('SU
     });
   } catch (err) {
     console.error('Send test inbound error:', err);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -3974,7 +5599,7 @@ app.get('/admin/custom-requests', adminAuthMiddleware, async (c) => {
     });
   } catch (err) {
     console.error('Admin custom requests fetch error:', err.message);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -4020,7 +5645,7 @@ app.patch('/admin/custom-requests/:id', adminAuthMiddleware, async (c) => {
     return c.json({ success: true, message: 'Status updated successfully', id, status });
   } catch (err) {
     console.error('Admin custom request update error:', err.message);
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: 'An internal server error occurred. Please try again shortly.' }, 500);
   }
 });
 
@@ -4049,18 +5674,38 @@ function isKnownSpaPath(pathname) {
 }
 
 mainApp.use('*', async (c, next) => {
+  const requestUrl = new URL(c.req.url);
+  const canonicalUrl = new URL(c.env?.SITE_URL || 'https://geelarkflows.com');
+  const requestHostname = requestUrl.hostname.toLowerCase();
+  const canonicalHostname = canonicalUrl.hostname.toLowerCase();
+  const isCanonicalHostname = requestHostname === canonicalHostname;
+  const isWwwHostname = requestHostname === `www.${canonicalHostname}`;
+
+  // Never allow the public site or its legacy www hostname to serve a login,
+  // checkout, or storefront response over plaintext HTTP. A 308 preserves the
+  // request method for clients that accidentally call an API over HTTP.
+  if ((isCanonicalHostname || isWwwHostname) && (requestUrl.protocol !== 'https:' || isWwwHostname)) {
+    requestUrl.protocol = 'https:';
+    requestUrl.hostname = canonicalHostname;
+    requestUrl.port = canonicalUrl.port;
+    return c.redirect(requestUrl.toString(), 308);
+  }
+
+  await next();
+
+  // Apply these after downstream handlers so headers also survive raw static
+  // asset Responses returned by the ASSETS binding.
   c.header('X-Content-Type-Options', 'nosniff');
   c.header('X-Frame-Options', 'DENY');
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
   c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
   c.header(
     'Content-Security-Policy',
-    "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' https: blob:; connect-src 'self'",
+    "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; upgrade-insecure-requests; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' https: blob:; connect-src 'self'",
   );
-  if (c.req.url.startsWith('https://')) {
+  if (requestUrl.protocol === 'https:') {
     c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
   }
-  await next();
 });
 
 // Mount all API endpoints under /api
@@ -4075,7 +5720,10 @@ mainApp.all('*', async (c) => {
   if (c.env?.ASSETS) {
     const res = await c.env.ASSETS.fetch(c.req.raw);
     if (res.status === 404 && !c.req.path.includes('.') && isKnownSpaPath(c.req.path)) {
-      return c.env.ASSETS.fetch(new Request(new URL('/index.html', c.req.url), c.req.raw));
+      // Fetch the root shell instead of /index.html. Cloudflare's default HTML
+      // handling redirects /index.html to /, which would erase deep-link URLs
+      // such as /admin/custom-requests.
+      return c.env.ASSETS.fetch(new Request(new URL('/', c.req.url), c.req.raw));
     }
     return res;
   }

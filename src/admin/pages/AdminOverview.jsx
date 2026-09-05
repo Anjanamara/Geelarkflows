@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { formatAdminDate } from '../dateUtils';
+import { formatStatusLabel } from '../formatUtils';
 
 export default function AdminOverview({ navigate, lastSyncedAt }) {
   const [data, setData] = useState(null);
@@ -241,7 +243,7 @@ export default function AdminOverview({ navigate, lastSyncedAt }) {
                     <td className="font-mono" style={{ fontWeight: 700, color: 'var(--admin-text-primary)' }}>
                       {ord.id}
                     </td>
-                    <td className="font-mono">{new Date(ord.created_at).toLocaleDateString()}</td>
+                    <td className="font-mono">{formatAdminDate(ord.created_at)}</td>
                     <td>{ord.customer_email}</td>
                     <td className="font-mono" style={{ fontWeight: 700 }}>
                       ${Number(ord.total_usd || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
@@ -254,7 +256,7 @@ export default function AdminOverview({ navigate, lastSyncedAt }) {
                     </td>
                     <td>
                       <span className={`status-badge ${ord.fulfillment_status || 'not_ready'}`}>
-                        {ord.fulfillment_status || 'not_ready'}
+                        {formatStatusLabel(ord.fulfillment_status || 'not_ready')}
                       </span>
                     </td>
                   </tr>

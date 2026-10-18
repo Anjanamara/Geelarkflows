@@ -243,6 +243,9 @@
 .analytics-nowrap { white-space: nowrap; }
 .analytics-events-table { min-width: 1080px; }
 .analytics-active-carts-table { min-width: 980px; }
+.analytics-leads-table { min-width: 1280px; }
+.analytics-lead-email { color: var(--admin-info); font-weight: 700; text-decoration: none; }
+.analytics-lead-email:hover { text-decoration: underline; text-underline-offset: 2px; }
 .analytics-inline-warning { padding: 10px 12px; border: 1px solid rgba(255,184,79,.25); border-radius: 7px; background: var(--admin-warning-soft); color: var(--admin-warning); }
 .analytics-error-panel { padding: 34px; text-align: center; }
 .analytics-error-panel p { margin: 8px 0 0; color: var(--admin-danger); }
@@ -261,6 +264,7 @@
 .notification-message-field { grid-column: span 2; }
 .notification-message-field textarea { min-height: 76px; padding-top: 9px; resize: vertical; line-height: 1.45; }
 .notification-message-field small { justify-self: end; color: var(--admin-text-muted); font: 9px var(--admin-font-mono); }
+.notification-target-field small { color: var(--admin-text-muted); font-size: 9.5px; line-height: 1.4; }
 .notification-table { min-width: 1120px; }
 .notification-admin-message { max-width: 350px; margin-top: 4px; display: block; color: var(--admin-text-muted); font-size: 9.5px; line-height: 1.45; }
 .notification-push-option { grid-column: span 2; min-height: 58px; padding: 10px 12px; display: flex; align-items: flex-start; gap: 10px; border: 1px solid rgba(73,190,255,.22); border-radius: 7px; background: rgba(73,190,255,.055); cursor: pointer; }

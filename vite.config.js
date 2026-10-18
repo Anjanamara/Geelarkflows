@@ -25,8 +25,10 @@ const localDevInboundEmails = new Map();
 const localDevAttachments = new Map();
 const localDevCustomRequests = new Map();
 const localDevCartState = new Map();
+const localDevEngagementState = new Map();
 const localDevNotificationReceipts = new Map();
 const localDevPushSubscriptions = new Map();
+const localDevLeads = new Map();
 const localDevVapidPublicKey = 'BGeCvdAiPbmKQWzMxOF6Arlal71NLS5k0eraATcr-AjyEL5khb51XZ_vk5J_AT5AcYKjhDraknI6byFNstqTKE8';
 const localDevCoupons = new Map([
   ['DEV10', {
@@ -51,6 +53,7 @@ const localDevNotifications = new Map([
     title: 'A saving for your cart',
     message: 'Use DEV10 to save 10% on the workflows currently in your cart.',
     audience_type: 'active_cart',
+    behavior_trigger: 'immediate',
     product_id: null,
     coupon_id: 'cpn_dev10',
     coupon_code: 'DEV10',
@@ -368,13 +371,48 @@ export default defineConfig(({ mode }) => {
               return;
             }
 
+            // POST /api/analytics/engagement (threshold state for local targeting)
+            if (req.url?.startsWith('/api/analytics/engagement') && req.method === 'POST') {
+              let bodyStr = '';
+              req.on('data', chunk => { bodyStr += chunk; });
+              req.on('end', () => {
+                try {
+                  const body = JSON.parse(bodyStr || '{}');
+                  const visitorId = String(body.visitor_id || '');
+                  if (!visitorId) return sendJson(400, { success: false, error: 'Invalid engagement state.' });
+                  const existing = localDevEngagementState.get(visitorId) || {};
+                  const pageViews = Math.max(Number(existing.page_views || 1), Number(body.page_views || 1));
+                  const scrollPercent = Math.max(Number(existing.max_scroll_percent || 0), Number(body.scroll_percent || 0));
+                  const engagedSeconds = Math.max(Number(existing.engaged_seconds || 0), Number(body.engaged_seconds || 0));
+                  const state = {
+                    page_views: pageViews,
+                    max_scroll_percent: scrollPercent,
+                    engaged_seconds: engagedSeconds,
+                    last_product_id: body.product_id || existing.last_product_id || null,
+                    engaged_at: existing.engaged_at || (engagedSeconds >= 10 || pageViews >= 2 || scrollPercent >= 50 ? new Date().toISOString() : null),
+                    deep_scrolled_at: existing.deep_scrolled_at || (scrollPercent >= 90 ? new Date().toISOString() : null),
+                  };
+                  localDevEngagementState.set(visitorId, state);
+                  return sendJson(202, { success: true, recorded: true, engaged: Boolean(state.engaged_at), deep_scrolled: Boolean(state.deep_scrolled_at) });
+                } catch {
+                  return sendJson(400, { success: false, error: 'Invalid engagement state.' });
+                }
+              });
+              return;
+            }
+
             // GET /api/notifications
             if (req.url?.startsWith('/api/notifications?') && req.method === 'GET') {
               const requestUrl = new URL(req.url, 'http://localhost');
               const visitorId = requestUrl.searchParams.get('visitor_id') || '';
               const cartProductIds = new Set(localDevCartState.get(visitorId) || []);
+              const engagement = localDevEngagementState.get(visitorId);
               const items = Array.from(localDevNotifications.values()).filter((notification) => {
                 if (!notification.active) return false;
+                const behavior = notification.behavior_trigger || 'immediate';
+                if (behavior === 'engaged' && !engagement?.engaged_at) return false;
+                if (behavior === 'deep_scroll' && Number(engagement?.max_scroll_percent || 0) < 90) return false;
+                if (behavior === 'product_view' && engagement?.last_product_id !== notification.product_id) return false;
                 if (notification.audience_type === 'active_cart' && cartProductIds.size === 0) return false;
                 if (notification.audience_type === 'product_cart' && !cartProductIds.has(notification.product_id)) return false;
                 const receipt = localDevNotificationReceipts.get(`${notification.id}:${visitorId}`);
@@ -480,6 +518,90 @@ export default defineConfig(({ mode }) => {
                   });
                 } catch (err) {
                   return sendJson(500, { success: false, error: err.message });
+                }
+              });
+              return;
+            }
+
+            // POST /api/leads/preview — local value-exchange and referral mock
+            if (req.url?.startsWith('/api/leads/preview') && req.method === 'POST') {
+              let bodyStr = '';
+              req.on('data', chunk => { bodyStr += chunk; });
+              req.on('end', () => {
+                try {
+                  const body = JSON.parse(bodyStr || '{}');
+                  const email = String(body.email || '').trim().toLowerCase();
+                  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+                    return sendJson(400, { success: false, error: 'Enter a valid email address.' });
+                  }
+                  const existing = localDevLeads.get(email);
+                  const token = Math.random().toString(16).slice(2, 12).padEnd(10, '0').toUpperCase();
+                  const referralCode = existing?.referral_code || `GF${token}`;
+                  const couponCode = existing?.welcome_coupon_code || `START10-${token.slice(0, 8)}`;
+                  const expiresAt = existing?.welcome_coupon_expires_at || new Date(Date.now() + 14 * 86400000).toISOString();
+                  const unsubscribeToken = Math.random().toString(16).slice(2).padEnd(48, '0').slice(0, 48);
+                  const selected = devCatalogMap.get(String(body.selected_product_id || ''));
+                  const productIds = Array.isArray(body.product_ids) ? body.product_ids.filter((id) => devCatalogMap.has(id)) : [];
+                  const lead = {
+                    id: existing?.id || `lead_dev_${token}`,
+                    email,
+                    visitor_id: String(body.visitor_id || '').slice(0, 12),
+                    selected_product_id: selected?.id || null,
+                    selected_product_title: selected?.title || null,
+                    cart_items: productIds.map((id) => ({ product_id: id, title: devCatalogMap.get(id).title })),
+                    source_path: body.page_path || '/',
+                    referrer_host: body.landing_referrer_host || 'Direct',
+                    country_code: 'IN', region: 'Telangana', city: 'Hyderabad',
+                    device_type: 'Desktop', browser_family: 'Chrome', os_family: 'Windows',
+                    marketing_consent: Boolean(existing?.marketing_consent || body.marketing_consent),
+                    welcome_coupon_code: couponCode,
+                    welcome_coupon_expires_at: expiresAt,
+                    referral_code: referralCode,
+                    referred_by_code: body.referred_by_code || existing?.referred_by_code || null,
+                    earned_referrals: existing?.earned_referrals || 0,
+                    email_delivery_status: 'sent',
+                    status: existing?.status || 'new',
+                    unsubscribe_token: unsubscribeToken,
+                    created_at: existing?.created_at || new Date().toISOString(),
+                    last_requested_at: new Date().toISOString(),
+                  };
+                  localDevLeads.set(email, lead);
+                  if (!localDevCoupons.has(couponCode)) {
+                    localDevCoupons.set(couponCode, {
+                      id: `cpn_dev_lead_${token}`, code: couponCode, description: 'Free-preview welcome offer',
+                      discount_type: 'percentage', discount_value: 10, min_subtotal_cents: 0,
+                      max_redemptions: 1, active: true, starts_at: null, expires_at: expiresAt,
+                      redemption_count: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+                    });
+                  }
+                  return sendJson(existing ? 200 : 201, {
+                    success: true,
+                    data: {
+                      email_sent: true,
+                      share_url: `http://localhost:5173/?ref=${referralCode}`,
+                      discount_percent: 10,
+                      coupon_expires_at: expiresAt,
+                    },
+                  });
+                } catch (err) {
+                  return sendJson(500, { success: false, error: err.message });
+                }
+              });
+              return;
+            }
+
+            if (req.url?.startsWith('/api/leads/unsubscribe') && req.method === 'POST') {
+              let bodyStr = '';
+              req.on('data', chunk => { bodyStr += chunk; });
+              req.on('end', () => {
+                try {
+                  const { token } = JSON.parse(bodyStr || '{}');
+                  const lead = Array.from(localDevLeads.values()).find((item) => item.unsubscribe_token === token);
+                  if (!lead) return sendJson(400, { success: false, error: 'This email preference link is invalid.' });
+                  lead.marketing_consent = false;
+                  return sendJson(200, { success: true, message: 'Optional marketing emails have been disabled.' });
+                } catch {
+                  return sendJson(400, { success: false, error: 'This email preference link is invalid.' });
                 }
               });
               return;
@@ -1061,9 +1183,16 @@ export default defineConfig(({ mode }) => {
                     metrics: {
                       unique_visitors: 184,
                       page_views: 493,
+                      engaged_visitors: 121,
+                      deep_scrollers: 47,
+                      flow_viewers: 96,
+                      engagement_rate: 65.8,
                       cart_visitors: 37,
                       cart_additions: 52,
                       active_carts: 12,
+                      contact_leads: localDevLeads.size,
+                      marketing_opt_ins: Array.from(localDevLeads.values()).filter((lead) => lead.marketing_consent).length,
+                      rewarded_referrals: Array.from(localDevLeads.values()).reduce((sum, lead) => sum + Number(lead.earned_referrals || 0), 0),
                       cart_visitor_rate: 20.1,
                     },
                     daily: [
@@ -1094,6 +1223,7 @@ export default defineConfig(({ mode }) => {
                       { visitor_id: 'a4e92c0d71f8', item_count: 2, cart_value_usd: 1250, items: [{ product_id: 'instagram-account-creation', title: 'Instagram Account Creation' }, { product_id: 'instagram-warmup', title: 'Instagram Warmup' }], page_path: '/cart', referrer_host: 'google.com', ip_network: '203.0.113.0/24', country_code: 'IN', region: 'Telangana', city: 'Hyderabad', device_type: 'Desktop', browser_family: 'Chrome', os_family: 'Windows', updated_at: now.toISOString().replace('T', ' ').slice(0, 19) },
                       { visitor_id: '91bc73d0842a', item_count: 1, cart_value_usd: 250, items: [{ product_id: 'tiktok-warmup', title: 'TikTok Warmup' }], page_path: '/cart', referrer_host: null, ip_network: '2001:db8:42::/48', country_code: 'US', region: 'California', city: 'San Francisco', device_type: 'Mobile', browser_family: 'Safari', os_family: 'iOS', updated_at: new Date(now.getTime() - 3600000).toISOString().replace('T', ' ').slice(0, 19) },
                     ],
+                    contact_leads: Array.from(localDevLeads.values()).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))),
                     recent_cart_additions: [
                       { visitor_id: 'a4e92c0d71f8', product_id: 'instagram-account-creation', title: 'Instagram Account Creation', page_path: '/flows/instagram-account-creation', referrer_host: 'google.com', ip_network: '203.0.113.0/24', country_code: 'IN', region: 'Telangana', city: 'Hyderabad', device_type: 'Desktop', browser_family: 'Chrome', os_family: 'Windows', created_at: now.toISOString().replace('T', ' ').slice(0, 19) },
                       { visitor_id: '91bc73d0842a', product_id: 'tiktok-warmup', title: 'TikTok Warmup', page_path: '/', referrer_host: 'Direct', ip_network: '2001:db8:42::/48', country_code: 'US', region: 'California', city: 'San Francisco', device_type: 'Mobile', browser_family: 'Safari', os_family: 'iOS', created_at: new Date(now.getTime() - 3600000).toISOString().replace('T', ' ').slice(0, 19) },
@@ -1213,7 +1343,10 @@ export default defineConfig(({ mode }) => {
                     const message = String(body.message || '').trim();
                     if (title.length < 3 || message.length < 5) return sendJson(400, { success: false, error: 'Enter a title and message.' });
                     if (!['all', 'active_cart', 'product_cart'].includes(body.audience_type)) return sendJson(400, { success: false, error: 'Choose a valid audience.' });
+                    const behaviorTrigger = String(body.behavior_trigger || 'immediate');
+                    if (!['immediate', 'engaged', 'deep_scroll', 'product_view'].includes(behaviorTrigger)) return sendJson(400, { success: false, error: 'Choose a valid behavior.' });
                     if (body.audience_type === 'product_cart' && !devCatalogMap.has(body.product_id)) return sendJson(400, { success: false, error: 'Choose a valid flow.' });
+                    if (behaviorTrigger === 'product_view' && !devCatalogMap.has(body.product_id)) return sendJson(400, { success: false, error: 'Choose a valid flow.' });
                     if (!/^\/(?!\/)/.test(String(body.cta_url || '/'))) return sendJson(400, { success: false, error: 'CTA URL must be an internal path.' });
                     const coupon = body.coupon_id
                       ? Array.from(localDevCoupons.values()).find((item) => item.id === body.coupon_id)
@@ -1225,7 +1358,8 @@ export default defineConfig(({ mode }) => {
                       title,
                       message,
                       audience_type: body.audience_type,
-                      product_id: body.audience_type === 'product_cart' ? body.product_id : null,
+                      behavior_trigger: behaviorTrigger,
+                      product_id: body.audience_type === 'product_cart' || behaviorTrigger === 'product_view' ? body.product_id : null,
                       coupon_id: coupon?.id || null,
                       coupon_code: coupon?.code || null,
                       cta_label: String(body.cta_label || '').trim() || null,

@@ -8,6 +8,7 @@ import {
   normalizeCouponCode,
   paymentStageFromStatus,
 } from '../checkoutIntent';
+import { getStoredReferralCode } from '../referrals';
 import CheckoutProgress from '../components/CheckoutProgress';
 import './CheckoutPage.css';
 
@@ -360,6 +361,7 @@ export default function CheckoutPage({ navigate }) {
           payment_network: selectedNetwork,
           delivery_method: deliveryMethod,
           coupon_code: appliedCoupon?.code || undefined,
+          referred_by_code: getStoredReferralCode() || undefined,
           cart: cartSnapshot,
         }),
       });

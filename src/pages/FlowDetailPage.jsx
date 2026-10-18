@@ -3,6 +3,8 @@ import { useCart } from '../context/CartContext';
 import { products, platforms } from '../data/products';
 import { PROVEN_FLOW_NOTE, OUTCOME_DISCLAIMER, getCompatibilityNote } from '../data/trustCopy';
 import FloatingCart from '../components/FloatingCart';
+import LeadMagnet from '../components/LeadMagnet';
+import StorefrontNotifications from '../components/StorefrontNotifications';
 import './FlowDetailPage.css';
 
 export default function FlowDetailPage({ productId, navigate }) {
@@ -80,6 +82,7 @@ export default function FlowDetailPage({ productId, navigate }) {
             </span>
           </a>
           <div className="flow-detail-header-actions">
+            <StorefrontNotifications />
             <FloatingCart />
             <a href="/" className="btn-back-to-marketplace" onClick={handleBackClick}>← Back to marketplace</a>
           </div>
@@ -194,6 +197,8 @@ export default function FlowDetailPage({ productId, navigate }) {
               >
                 {isJustAdded ? 'Added ✓' : isInCart ? 'In cart ✓' : '+ Add to cart'}
               </button>
+
+              <LeadMagnet variant="compact" productId={product.id} />
 
               <div className="flow-buybox-trust">
                 <div className="flow-trust-item">

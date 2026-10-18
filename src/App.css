@@ -205,7 +205,9 @@
   .section-heading { margin-bottom: 40px; grid-template-columns: minmax(0,1.25fr) minmax(280px,.65fr); align-items: end; gap: clamp(42px,8vw,118px); }
   .section-heading h2 { font-size: clamp(3.2rem,4.7vw,4.35rem); }
   .section-heading > p { font-size: var(--type-body); }
-  .specialties-section { padding: clamp(88px,8vw,122px) max(26px,calc((100% - var(--site-width))/2)); }
+  /* The section is capped at 1360px, so viewport-derived padding can exceed
+     its own width on ultrawide displays and collapse the content column. */
+  .specialties-section { padding: clamp(88px,8vw,122px) clamp(26px,6vw,80px); }
   .specialty-grid { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
   .specialty-card { min-height: 230px; padding: 27px; }
   .specialty-card h3 { margin-top: 40px; font-size: var(--type-body-lg); }

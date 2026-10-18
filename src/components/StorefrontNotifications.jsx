@@ -63,11 +63,14 @@ export default function StorefrontNotifications() {
     const onVisibilityChange = () => {
       if (!document.hidden) fetchNotifications();
     };
+    const onEngagement = () => window.setTimeout(fetchNotifications, 250);
     document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('geelark:engagement', onEngagement);
     return () => {
       window.clearTimeout(initialTimer);
       window.clearInterval(pollTimer);
       document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('geelark:engagement', onEngagement);
     };
   }, [fetchNotifications]);
 
@@ -279,7 +282,7 @@ export default function StorefrontNotifications() {
               <div className="notification-empty">
                 <span aria-hidden="true">✓</span>
                 <strong>You’re all caught up</strong>
-                <p>New store updates and relevant cart offers will appear here.</p>
+                <p>Relevant previews, flow updates, and cart offers will appear here.</p>
               </div>
             ) : notifications.map((notification) => (
               <article className="notification-item" key={notification.id}>
@@ -302,7 +305,7 @@ export default function StorefrontNotifications() {
             <div className="push-control-copy">
               <strong>Browser alerts</strong>
               {pushState === 'subscribed' && <span><i /> On — alerts can arrive when this site is closed.</span>}
-              {pushState === 'available' && <span>Optional alerts for important updates and relevant cart offers. No email required.</span>}
+              {pushState === 'available' && <span>Optional alerts for relevant previews, flow updates, and cart offers. No email required.</span>}
               {pushState === 'denied' && <span>Blocked in browser settings. Change the site notification permission to enable.</span>}
               {pushState === 'unsupported' && <span>Not available here. On iPhone or iPad, add this site to the Home Screen first.</span>}
               {pushState === 'privacy' && <span>Unavailable while Global Privacy Control or Do Not Track is enabled.</span>}

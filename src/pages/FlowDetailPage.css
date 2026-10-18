@@ -101,5 +101,7 @@
 
 @media (max-width: 390px) {
   .flow-detail-brand-lockup .brand-text small { display: none; }
-  .btn-back-to-marketplace { padding-inline: 9px; }
+  .flow-detail-header-actions { gap: 6px; }
+  .btn-back-to-marketplace { width: 42px; padding: 0; justify-content: center; font-size: 0; }
+  .btn-back-to-marketplace::after { content: '←'; font-size: var(--type-small); }
 }

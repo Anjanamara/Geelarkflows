@@ -162,6 +162,25 @@ const restoredCartState = await app.request(
 );
 assert.equal(restoredCartState.status, 202);
 
+const engagementState = await app.request(new Request('https://geelarkflows.com/api/analytics/engagement', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    visitor_id: 'visitor_1234567890abcdef',
+    session_id: 'session_1234567890abcdef',
+    page_path: '/flows/instagram-account-creation/',
+    product_id: 'instagram-account-creation',
+    page_views: 2,
+    scroll_percent: 90,
+    engaged_seconds: 12,
+  }),
+}), undefined, env);
+assert.equal(engagementState.status, 202);
+const storedEngagement = db.sqlite.prepare('SELECT * FROM storefront_engagement_state').get();
+assert.equal(storedEngagement.max_scroll_percent, 90);
+assert.equal(storedEngagement.last_product_id, 'instagram-account-creation');
+assert(storedEngagement.engaged_at);
+
 const unauthenticatedAnalytics = await app.request(
   'https://geelarkflows.com/api/admin/analytics?days=30',
   undefined,
@@ -188,6 +207,10 @@ const dashboard = await adminAnalytics.json();
 assert.equal(dashboard.success, true);
 assert.equal(dashboard.data.metrics.unique_visitors, 1);
 assert.equal(dashboard.data.metrics.page_views, 1);
+assert.equal(dashboard.data.metrics.engaged_visitors, 1);
+assert.equal(dashboard.data.metrics.deep_scrollers, 1);
+assert.equal(dashboard.data.metrics.flow_viewers, 1);
+assert.equal(dashboard.data.metrics.engagement_rate, 100);
 assert.equal(dashboard.data.metrics.cart_visitors, 1);
 assert.equal(dashboard.data.metrics.cart_additions, 1);
 assert.equal(dashboard.data.metrics.active_carts, 1);
@@ -224,6 +247,7 @@ assert.equal(
 const clientAnalyticsSource = fs.readFileSync('src/analytics.js', 'utf8');
 assert(clientAnalyticsSource.includes('document.referrer'));
 assert(clientAnalyticsSource.includes('landing_referrer_host: getLandingReferrerHost()'));
+assert(clientAnalyticsSource.includes("fetch('/api/analytics/engagement'"));
 const adminAnalyticsSource = fs.readFileSync('src/admin/pages/AdminAnalytics.jsx', 'utf8');
 assert(adminAnalyticsSource.includes('Traffic sources'));
 

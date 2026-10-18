@@ -34,5 +34,7 @@ assert.match(cards, /\.flow-description[^}]+font-size:\s*0\.9375rem;[^}]+line-he
 assert.doesNotMatch(cards, /-webkit-line-clamp/, 'Card descriptions must remain available when users enlarge or space text.');
 assert.match(cards, /\.card-footer a,\.card-footer button[^}]+font-size:\s*var\(--type-small\);/, 'Card actions must use legible control text.');
 assert.match(html, /Manrope:wght@400\.\.800/, 'Manrope must load as a variable font so authored intermediate weights are supported.');
+assert.match(app, /\.specialties-section\s*\{\s*padding:\s*clamp\(88px,8vw,122px\)\s+clamp\(26px,6vw,80px\);\s*\}/, 'The custom-capabilities section must retain bounded horizontal padding on ultrawide screens.');
+assert.doesNotMatch(app, /\.specialties-section\s*\{[^}]*padding:[^;}]*calc\(\(100%\s*-\s*var\(--site-width\)\)\s*\/\s*2\)/, 'A max-width section must not derive its padding from the full viewport width.');
 
 console.log('Storefront typography regression checks passed.');

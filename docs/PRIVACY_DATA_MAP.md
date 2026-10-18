@@ -1,7 +1,7 @@
 # GeeLark Flows — Privacy & Data Processing Map
 
-> **Document Version**: 1.2.0 (Security-Hardened Baseline)
-> **Last Updated**: 2026-09-02
+> **Document Version**: 1.3.0 (Lead & Referral Baseline)
+> **Last Updated**: 2026-09-14
 > **Applicability**: Public Storefront, Checkout Engine, Custom Requests, Inbound/Outbound Email, and Admin Operations.
 
 ---
@@ -59,6 +59,15 @@ This document maps all personal and operational data processed by GeeLark Flows 
 | **Email Message IDs & References** (`provider_email_id`, `message_id`, `in_reply_to`) | Webhook deduplication and conversation threading | Email RFC headers | Cloudflare D1 (`inbound_emails`) | Resend | Persists in D1 | Technical operational | None. |
 | **Attachment Metadata & Provider Reference** (`filename`, `size_bytes`, `storage_reference`) | Processing customer-submitted logs or screenshots | Inbound email attachments | Cloudflare D1; content remains with Resend | Resend | Persists until provider expiry or record deletion | **Required** | Define attachment deletion policy (e.g. purge after 90 days). Admin downloads are authenticated and proxied; raw provider references are not returned to the browser. |
 
+### C2. Free Preview Leads & Referral Rewards (`storefront_leads`, `storefront_referral_rewards`)
+
+| Data Field | Purpose | Source | Storage System | External Processor | Retention Status | Customer Disclosure | Owner Decision Needed |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Voluntary Email & Interest Context** | Deliver the requested preview, welcome code, and relevant operator response | One-field lead form plus selected workflow/current cart | Cloudflare D1 (`storefront_leads`) | Resend | While needed to deliver request, operate offer, and measure usefulness | Privacy Policy §2 | Set a routine deletion or review window for inactive leads. |
+| **Marketing Consent / Opt-Out** | Restrict optional offers to visitors who took a separate affirmative action | Unchecked checkbox and unsubscribe page | Cloudflare D1 | Resend for opted-in messages | While needed to demonstrate and honor the choice | Privacy Policy §2–3 | None. Silence never creates consent. |
+| **Welcome Coupon & Referral Code** | Provide immediate benefit and attribute voluntary referrals | Server generated | Cloudflare D1 | Resend | Coupon validity plus reasonable fraud/accounting retention | Terms §9; Privacy Policy §2 | One use; welcome offer expires after 14 days. |
+| **Qualified Referral Reward** | Issue a reward only after a referred order reaches verified paid state | Payment reconciliation plus stored referral code | Cloudflare D1 | Resend | With reward/accounting records | Terms §9; Privacy Policy §2 | Purchaser email is hashed in the reward record and never shown to the referrer. |
+
 ---
 
 ### D. Administrative & Security Systems (`admin_users`, `admin_sessions`, `audit_logs`, `login_rate_limits`)
@@ -79,12 +88,13 @@ This document maps all personal and operational data processed by GeeLark Flows 
 | **Storefront Events** (`event_type`, `product_id`, `page_path`, `referrer_host`) | Page-view, flow-interest, cart-intent, and traffic-source reporting | Storefront interactions; the original document referrer is reduced in-browser to its hostname (or `Direct` / `Internal`) and retained for the browser session | Cloudflare D1 | Cloudflare | Rolling 90 days | Privacy Policy §2–3 | Full referring URLs, paths, and query strings are not sent or stored. |
 | **Coarse Technical Context** (`ip_network`, `ip_hash`, `country_code`, `region`, `city`, `device_type`, `browser_family`, `os_family`) | Abuse controls and aggregate audience context | Cloudflare request metadata and generalized user-agent classification | Cloudflare D1 | Cloudflare | Rolling 90 days | Privacy Policy §2 | Raw visitor IP and full user-agent strings are not stored. GPC/DNT disables collection. |
 | **Last-Known Cart State** (`product_ids_json`, `item_count`, `cart_value_cents`, `updated_at`) | Distinguish active carts from historical add-to-cart actions and measure cart value | Product identifiers from the functional browser cart; value recalculated from the server catalog | Cloudflare D1 (`storefront_cart_state`) | Cloudflare | Rolling 90 days | Privacy Policy §2 | No email or direct identity is attached. GPC/DNT disables collection; cleared carts are retained with zero items until expiry. |
+| **Limited Engagement State** (`page_views`, `max_scroll_percent`, `engaged_seconds`, `last_product_id`) | Distinguish a new visit from meaningful engagement and select a relevant first-party message | Threshold updates at 10 seconds, a second page, 50% scroll, 90% scroll, or a workflow detail view | Cloudflare D1 (`storefront_engagement_state`) | Cloudflare | Rolling 90 days | Privacy Policy §2 | No cursor replay, keystrokes, or form contents. GPC/DNT disables collection. |
 
 ### F. In-Site Notifications (`storefront_notifications`, `storefront_notification_receipts`)
 
 | Data Field | Purpose | Source | Storage System | External Processor | Retention Status | Customer Disclosure | Owner Decision Needed |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Campaign Content & Target** (`title`, `message`, `audience_type`, `product_id`, `coupon_id`) | Publish a first-party bell notification to all visitors or an anonymous cart segment | Administrator-created campaign | Cloudflare D1 | Cloudflare | Retained until operational deletion | Privacy Policy §2–3 | Deactivate a campaign to stop delivery; creation and activation changes are audited. |
+| **Campaign Content & Target** (`title`, `message`, `audience_type`, `behavior_trigger`, `product_id`, `coupon_id`) | Publish a first-party bell notification to all visitors, an engagement segment, a workflow-view segment, or an anonymous cart segment | Administrator-created campaign | Cloudflare D1 | Cloudflare | Retained until operational deletion | Privacy Policy §2–3 | Deactivate a campaign to stop delivery; creation and activation changes are audited. |
 | **Pseudonymous Delivery State** (`visitor_hash`, `delivered_at`, `read_at`, `dismissed_at`) | Maintain unread badges, prevent dismissed messages from returning, and report aggregate delivery/read counts | Random first-party visitor ID, hashed before storage | Cloudflare D1 | Cloudflare | Rolling 90 days | Privacy Policy §2 and §5 | No customer email or direct identity is attached. GPC/DNT disables the feed and targeting. |
 | **Opt-In Push Subscription** (`endpoint`, `p256dh_key`, `auth_key`, `visitor_hash`) | Deliver user-visible browser notifications when the site is closed | Browser Push API after explicit visitor permission | Cloudflare D1 (`storefront_push_subscriptions`) | Browser or operating-system push service | Active until unsubscribe or expiry; revoked record deleted after 90 days | Privacy Policy §2 and §5 | Endpoint is restricted to recognized browser push-service hosts; no email is attached. GPC/DNT disables enrollment. |
 | **Push Delivery Result** (`notification_id`, `subscription_id`, `status`, `response_status`) | Prevent duplicate sends and report aggregate delivery outcomes | Server delivery attempt | Cloudflare D1 (`storefront_push_deliveries`) | Browser or operating-system push service | Rolling 90 days | Privacy Policy §2 and §5 | Error text is generic and does not store subscription credentials. |
@@ -98,7 +108,10 @@ This document maps all personal and operational data processed by GeeLark Flows 
 | `geelark_cart_items` | `localStorage` | Array of item objects (`id`, `title`, `price`, `quantity`, `platform`) | Preserves customer cart contents between page navigations and refreshes | Persists until customer removes items, clears cart, or clears browser storage | **Required** (Functional / essential storage) | None. |
 | `geelark_active_payment` | `localStorage` | Active order snapshot (`orderId`, `paymentId`, private `statusToken`, `payAddress`, `currency`, `totalUsd`, `status`) | Keeps the private payment screen and locally generated QR code accessible after refresh | Cleared on return to marketplace or order dismissal | **Required** (Functional / essential storage) | None. |
 | `geelark_pending_coupon` | `localStorage` | Coupon code selected from an in-site notification | Carries the selected offer to checkout for one automatic validation attempt | Removed immediately when checkout reads it | Privacy Policy §2 | None. |
+| `geelark_session_engagement` | `sessionStorage` | Page-count, time, scroll thresholds, and last viewed workflow ID | Avoids sending a continuous interaction stream and keeps engagement prompts relevant | Removed when the browser session ends | Privacy Policy §2 | GPC/DNT disables use. |
+| `geelark_engagement_offer_dismissed` | `sessionStorage` | A one-bit dismissal marker | Prevents the compact preview prompt from returning during the same session | Removed when the browser session ends | Privacy Policy §2 | No identity or content is stored. |
 | `geelark_push_sync_at` | `localStorage` | Timestamp of the last successful push-subscription synchronization | Limits background subscription refreshes to once per day | Persists until browser alerts are turned off or browser storage is cleared | Privacy Policy §2 | No endpoint or push keys are stored in this value. |
+| `geelark_referral_code` | `localStorage` | A short referral campaign code, not an email or name | Preserves referral attribution until preview request or checkout | Persists until browser storage is cleared | Terms §9; Privacy Policy §2 | Self-referrals are rejected server-side. |
 | `gf_admin_session` | `Cookie` (`HttpOnly`, `Path=/`, `SameSite=Strict`, `Max-Age=43200`, `Secure` on HTTPS) | 32-byte cryptographically random token | Admin authentication for `/admin` management panel | 12 hours | Internal (Admin only) | None. |
 
 ---

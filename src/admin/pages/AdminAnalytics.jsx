@@ -75,6 +75,7 @@ export default function AdminAnalytics({ lastSyncedAt }) {
   const trafficSources = data?.traffic_sources || [];
   const locations = data?.locations || [];
   const activeCarts = data?.active_carts || [];
+  const contactLeads = data?.contact_leads || [];
   const recentEvents = data?.recent_cart_additions || [];
 
   return (
@@ -104,7 +105,22 @@ export default function AdminAnalytics({ lastSyncedAt }) {
         <div className="stat-card featured">
           <span className="stat-label">Unique Visitors</span>
           <span className="stat-value">{metrics.unique_visitors || 0}</span>
-          <span className="stat-sub">Anonymous browsers in {days} days</span>
+          <span className="stat-sub">Opened the storefront in {days} days</span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-label">Engaged Visitors</span>
+          <span className="stat-value">{metrics.engaged_visitors || 0}</span>
+          <span className="stat-sub">{metrics.engagement_rate || 0}% · 10s, second page, or 50% scroll</span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-label">Deep Scrollers</span>
+          <span className="stat-value">{metrics.deep_scrollers || 0}</span>
+          <span className="stat-sub">Reached 90% of a page</span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-label">Flow Viewers</span>
+          <span className="stat-value">{metrics.flow_viewers || 0}</span>
+          <span className="stat-sub">Opened a workflow detail page</span>
         </div>
         <div className="stat-card">
           <span className="stat-label">Cart Visitors</span>
@@ -131,7 +147,61 @@ export default function AdminAnalytics({ lastSyncedAt }) {
           <span className="stat-value">{metrics.page_views || 0}</span>
           <span className="stat-sub">One view per session and path</span>
         </div>
+        <div className="stat-card featured">
+          <span className="stat-label">Contactable Leads</span>
+          <span className="stat-value">{metrics.contact_leads || 0}</span>
+          <span className="stat-sub">{metrics.marketing_opt_ins || 0} opted into offers · {metrics.rewarded_referrals || 0} referral rewards</span>
+        </div>
       </div>
+
+      <section className="table-panel">
+        <div className="table-header-controls">
+          <div>
+            <strong>Voluntary preview leads</strong>
+            <span className="analytics-table-note">Contact details supplied to receive a free preview, personal welcome code, and referral link.</span>
+          </div>
+          <span>{days}-day lead view</span>
+        </div>
+        <div className="admin-table-wrapper">
+          <table className="admin-table analytics-leads-table">
+            <thead><tr><th>Received</th><th>Contact</th><th>Interest / Cart</th><th>Offer</th><th>Source</th><th>Consent</th><th>Referral</th><th>Status</th></tr></thead>
+            <tbody>
+              {contactLeads.length === 0 ? (
+                <tr><td colSpan={8} className="analytics-empty-cell">New preview and referral leads will appear here.</td></tr>
+              ) : contactLeads.map((lead) => (
+                <tr key={lead.id}>
+                  <td className="font-mono analytics-nowrap">{formatDateTime(lead.created_at)}</td>
+                  <td>
+                    <a className="analytics-lead-email" href={`mailto:${lead.email}`}>{lead.email}</a>
+                    <small className="analytics-product-id">Visitor {lead.visitor_id || 'not tracked'}</small>
+                  </td>
+                  <td>
+                    <strong>{lead.selected_product_title || 'Help choosing a flow'}</strong>
+                    {(lead.cart_items || []).map((item) => <small className="analytics-product-id" key={item.product_id}>{item.title}</small>)}
+                  </td>
+                  <td>
+                    <strong className="font-mono">{lead.welcome_coupon_code}</strong>
+                    <small className="analytics-product-id">Expires {formatDateTime(lead.welcome_coupon_expires_at)}</small>
+                  </td>
+                  <td>
+                    {lead.referrer_host || 'Direct'}
+                    <small className="analytics-product-id">{formatLocation(lead)} · {lead.source_path || '/'}</small>
+                  </td>
+                  <td><span className={`status-badge ${lead.marketing_consent ? 'confirmed' : 'pending'}`}>{lead.marketing_consent ? 'Opted in' : 'Preview only'}</span></td>
+                  <td>
+                    <strong className="font-mono">{lead.referral_code}</strong>
+                    <small className="analytics-product-id">Earned: {lead.earned_referrals || 0}{lead.referred_by_code ? ` · Via ${lead.referred_by_code}` : ''}</small>
+                  </td>
+                  <td>
+                    <span className={`status-badge ${lead.email_delivery_status === 'sent' ? 'confirmed' : lead.email_delivery_status === 'failed' ? 'failed' : 'pending'}`}>{lead.email_delivery_status}</span>
+                    <small className="analytics-product-id">{lead.status}</small>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       <section className="table-panel">
         <div className="table-header-controls">

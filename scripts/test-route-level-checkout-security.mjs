@@ -81,10 +81,12 @@ const mockDb = {
                 coupon_code: args[9],
                 coupon_discount_usd: args[10],
                 coupon_discount_cents: args[11],
-                status: args[12],
-                items: JSON.parse(args[13] || '[]'),
-                fulfillment_status: args[14],
-                status_token_hash: args[15],
+                lead_id: args[12],
+                referred_by_code: args[13],
+                status: args[14],
+                items: JSON.parse(args[15] || '[]'),
+                fulfillment_status: args[16],
+                status_token_hash: args[17],
               };
             }
             if (query.includes('INSERT INTO crypto_payments')) {

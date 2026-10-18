@@ -17,6 +17,10 @@ const AUTHORITATIVE_CATALOG_MAP = new Map(
       platform: product.platform,
       price: Number(product.price),
       category: product.details?.category || 'Automation',
+      description: product.details?.description || '',
+      features: Array.isArray(product.details?.features) ? product.details.features.slice(0, 5) : [],
+      requirements: Array.isArray(product.details?.requirements) ? product.details.requirements.slice(0, 5) : [],
+      delivery: product.details?.delivery || '',
     },
   ])
 );
@@ -35,6 +39,9 @@ function resolvePaymentNetwork(networkInput) {
 const PBKDF2_ITERATIONS = 100000;
 const PBKDF2_MAX_ITERATIONS = 100000;
 const HASH_ALGO_PREFIX = 'pbkdf2_sha256';
+const WELCOME_DISCOUNT_PERCENT = 10;
+const REFERRAL_REWARD_PERCENT = 10;
+const LEAD_CONSENT_VERSION = 'lead-offer-2026-09-14';
 
 class UnsupportedPasswordHashError extends Error {
   constructor() {
@@ -139,6 +146,16 @@ function validStorefrontClientId(value) {
   return /^[a-zA-Z0-9_-]{16,80}$/.test(String(value || ''));
 }
 
+function storefrontBehaviorEligible(trigger, engagement, productId) {
+  const behavior = trigger || 'immediate';
+  if (behavior === 'immediate') return true;
+  if (!engagement) return false;
+  if (behavior === 'engaged') return Boolean(engagement.engaged_at);
+  if (behavior === 'deep_scroll') return Number(engagement.max_scroll_percent || 0) >= 90;
+  if (behavior === 'product_view') return Boolean(productId) && engagement.last_product_id === productId;
+  return false;
+}
+
 function normalizeInternalCtaUrl(value, fallback = '/') {
   const url = String(value || '').trim().slice(0, 200);
   if (!url) return fallback;
@@ -202,6 +219,32 @@ async function enforcePushSubscriptionRateLimit(db, ipHash) {
     RETURNING request_count
   `).bind(key).first();
   return Number(row?.request_count || 0) <= 20;
+}
+
+async function enforceLeadCaptureRateLimit(db, ipHash, emailHash) {
+  const limits = [
+    { key: `lead_ip:${ipHash}`, maximum: 8 },
+    { key: `lead_email:${emailHash}`, maximum: 3 },
+  ];
+
+  for (const limit of limits) {
+    const row = await db.prepare(`
+      INSERT INTO api_rate_limits (key, window_started_at, request_count)
+      VALUES (?, CURRENT_TIMESTAMP, 1)
+      ON CONFLICT(key) DO UPDATE SET
+        request_count = CASE
+          WHEN window_started_at <= datetime('now', '-1 hour') THEN 1
+          ELSE request_count + 1
+        END,
+        window_started_at = CASE
+          WHEN window_started_at <= datetime('now', '-1 hour') THEN CURRENT_TIMESTAMP
+          ELSE window_started_at
+        END
+      RETURNING request_count
+    `).bind(limit.key).first();
+    if (Number(row?.request_count || 0) > limit.maximum) return false;
+  }
+  return true;
 }
 
 function getReferrerHost(requestUrl, referrerValue) {
@@ -318,6 +361,11 @@ function generateSecureToken(byteLength = 32) {
 function isValidEmail(value) {
   if (typeof value !== 'string' || value.length > 254) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+function normalizeReferralCode(value) {
+  const code = String(value || '').trim().toUpperCase();
+  return /^GF[A-F0-9]{10}$/.test(code) ? code : '';
 }
 
 function usdToCents(value) {
@@ -1012,6 +1060,191 @@ function calculateOrderTotals(resolvedCart = [], deliveryMethod = 'download_pack
   };
 }
 
+function sanitizeProviderError(error) {
+  return String(error?.message || error || 'Email delivery failed')
+    .replace(/re_[a-zA-Z0-9_-]+/g, '[REDACTED_API_KEY]')
+    .replace(/key-[a-zA-Z0-9_-]+/g, '[REDACTED_KEY]')
+    .slice(0, 300);
+}
+
+async function sendResendEmail(resendApiKey, payload) {
+  if (!resendApiKey) return null;
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result.error || Number(result.statusCode || 0) >= 400) {
+    throw new Error(`Resend API Error (${response.status}): ${result.message || result.error?.message || 'Email request failed.'}`);
+  }
+  return result;
+}
+
+async function sendLeadWelcomeEmail({
+  resendApiKey,
+  email,
+  product,
+  couponCode,
+  couponExpiresAt,
+  shareUrl,
+  unsubscribeUrl,
+  marketingConsent,
+}) {
+  if (!resendApiKey) return null;
+  const previewTitle = product ? product.title : 'GeeLark Flow Starter Preview';
+  const productUrl = product ? `https://geelarkflows.com/flows/${encodeURIComponent(product.id)}/` : 'https://geelarkflows.com/#catalog';
+  const features = product?.features?.length
+    ? product.features
+    : ['Choose the correct workflow for your operation', 'Confirm required inputs before purchase', 'Understand delivery, reuse, and support'];
+  const featureHtml = features.map((feature) => `<li style="margin:7px 0;color:#dce2de;">${escapeHtml(feature)}</li>`).join('');
+  const expiryDisplay = new Date(couponExpiresAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  const demoSubject = encodeURIComponent(`Free demo call request — ${previewTitle}`);
+  const demoBody = encodeURIComponent(`Hi GeeLark Flows,\n\nI reviewed the automatic preview for ${previewTitle} and would like a free demo call.\n\nMy platform/account volume: `);
+
+  return sendResendEmail(resendApiKey, {
+    from: 'GeeLark Flows <noreply@geelarkflows.com>',
+    to: [email],
+    reply_to: 'support@geelarkflows.com',
+    subject: `Your automatic ${previewTitle} preview + 10% code`,
+    html: `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:620px;margin:0 auto;background:#0b1018;color:#f4f6f5;padding:30px;border:1px solid #202a38;border-radius:12px;">
+        <span style="font:700 11px monospace;color:#a7ff4f;letter-spacing:.08em;">THIS EMAIL IS AUTOMATIC</span>
+        <h1 style="margin:12px 0 8px;font-size:25px;line-height:1.2;">Your free workflow preview.</h1>
+        <p style="margin:0;color:#adb7c6;font-size:15px;line-height:1.65;">You requested this automatic, no-cost preview of <strong style="color:#fff;">${escapeHtml(previewTitle)}</strong>. It gives you the useful scope first; it is not a personalized demo or sales call. No purchase is required.</p>
+        <div style="margin:22px 0;padding:18px;background:#111927;border:1px solid #263247;border-radius:10px;">
+          <strong style="display:block;margin-bottom:8px;">Preview scope</strong>
+          <ul style="margin:0;padding-left:20px;">${featureHtml}</ul>
+          ${product?.delivery ? `<p style="margin:14px 0 0;color:#8f9bae;font-size:13px;line-height:1.55;"><strong style="color:#dce2de;">Delivery:</strong> ${escapeHtml(product.delivery)}</p>` : ''}
+        </div>
+        <div style="margin:22px 0;padding:19px;border:1px solid rgba(167,255,79,.28);border-radius:10px;background:#101a13;">
+          <span style="display:block;color:#9eaa9f;font-size:12px;">YOUR PERSONAL 10% WELCOME CODE</span>
+          <strong style="display:block;margin:7px 0;color:#a7ff4f;font:800 24px monospace;letter-spacing:.05em;">${escapeHtml(couponCode)}</strong>
+          <span style="color:#9eaa9f;font-size:12px;">One use on workflow prices. Expires ${escapeHtml(expiryDisplay)}.</span>
+        </div>
+        <a href="${escapeHtml(productUrl)}" style="display:inline-block;padding:12px 17px;border-radius:8px;background:#816ef5;color:#fff;text-decoration:none;font-weight:800;">${product ? 'View this workflow' : 'Browse the catalog'} →</a>
+        <div style="margin:24px 0 0;padding:19px;background:#101623;border:1px solid #2e3b53;border-radius:10px;">
+          <span style="display:block;color:#8fd9ff;font:700 11px monospace;letter-spacing:.06em;">INTERESTED AFTER THE PREVIEW?</span>
+          <strong style="display:block;margin:8px 0 6px;font-size:18px;">Request a free demo call.</strong>
+          <p style="margin:0 0 14px;color:#9ca7b6;font-size:13px;line-height:1.6;">A real person can walk through the flow and answer fit questions. Nothing is booked automatically—reply only if you want the call.</p>
+          <a href="mailto:support@geelarkflows.com?subject=${demoSubject}&amp;body=${demoBody}" style="display:inline-block;padding:11px 15px;border-radius:8px;background:#e8edf5;color:#111827;text-decoration:none;font-weight:800;">Reply to request my free demo →</a>
+        </div>
+        <div style="margin-top:24px;padding-top:20px;border-top:1px solid #202a38;">
+          <strong style="display:block;font-size:14px;">Refer & earn another 10%</strong>
+          <p style="margin:7px 0;color:#9ca7b6;font-size:13px;line-height:1.55;">Share the link below. Your friend receives their own welcome code after requesting a preview. After their first order is confirmed, we email you a one-use 10% reward code. Rewards are discounts, not cash.</p>
+          <a href="${escapeHtml(shareUrl)}" style="color:#8fd9ff;word-break:break-all;font:12px monospace;">${escapeHtml(shareUrl)}</a>
+          <p style="margin:9px 0 0;color:#778294;font-size:11px;line-height:1.5;">If you recommend GeeLark Flows publicly, clearly state that you may earn a discount.</p>
+        </div>
+        <div style="margin-top:25px;padding-top:15px;border-top:1px solid #202a38;color:#697486;font-size:11px;line-height:1.55;">
+          <p style="margin:0 0 5px;">${marketingConsent ? 'You also opted into occasional GeeLark Flows product updates and offers.' : 'You requested this preview email; you were not added to optional marketing.'}</p>
+          <a href="${escapeHtml(unsubscribeUrl)}" style="color:#9ca7b6;">Manage email preferences</a> · <a href="mailto:support@geelarkflows.com" style="color:#9ca7b6;">support@geelarkflows.com</a>
+        </div>
+      </div>
+    `,
+  });
+}
+
+async function sendLeadInternalEmail({ resendApiKey, email, product, cartProducts, referredByCode, marketingConsent }) {
+  if (!resendApiKey) return null;
+  const interests = [product?.title, ...(cartProducts || []).map((item) => item.title)].filter(Boolean);
+  return sendResendEmail(resendApiKey, {
+    from: 'GeeLark Flows <noreply@geelarkflows.com>',
+    to: ['support@geelarkflows.com'],
+    reply_to: email,
+    subject: `New free-preview lead${product ? ` — ${product.title}` : ''}`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#0c0f0d;color:#f1f3f1;padding:28px;border:1px solid #222924;border-radius:8px;">
+        <span style="color:#a7ff4f;font:700 11px monospace;">NEW VOLUNTARY LEAD</span>
+        <h2 style="margin:12px 0 18px;">Free preview requested</h2>
+        <p><strong>Email:</strong> <a style="color:#8fd9ff;" href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a></p>
+        <p><strong>Interest:</strong> ${escapeHtml(interests.join(', ') || 'Help choosing a workflow')}</p>
+        <p><strong>Marketing consent:</strong> ${marketingConsent ? 'Yes' : 'No'}</p>
+        <p><strong>Referred by:</strong> ${escapeHtml(referredByCode || 'None')}</p>
+        <p style="color:#9aa49d;line-height:1.55;">This customer requested an automatic preview, not a call. Do not assume call interest or send a generic sales message. Respond personally only if they reply requesting the free demo call or asking a question. The preview, personal welcome code, and referral link were generated automatically.</p>
+      </div>
+    `,
+  });
+}
+
+async function sendReferralRewardEmail({ resendApiKey, email, couponCode, expiresAt }) {
+  if (!resendApiKey) return null;
+  const expiryDisplay = new Date(expiresAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  return sendResendEmail(resendApiKey, {
+    from: 'GeeLark Flows <noreply@geelarkflows.com>',
+    to: [email],
+    reply_to: 'support@geelarkflows.com',
+    subject: 'Your referral completed a purchase — here is your 10% reward',
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#0b1018;color:#f4f6f5;padding:30px;border:1px solid #202a38;border-radius:10px;">
+        <span style="color:#a7ff4f;font:700 11px monospace;">REFERRAL REWARD</span>
+        <h2 style="margin:12px 0;">You earned 10% off.</h2>
+        <p style="color:#adb7c6;line-height:1.6;">A friend who used your referral link completed a confirmed order. Thank you for the introduction.</p>
+        <div style="margin:20px 0;padding:18px;background:#101a13;border:1px solid rgba(167,255,79,.28);border-radius:9px;">
+          <strong style="color:#a7ff4f;font:800 24px monospace;">${escapeHtml(couponCode)}</strong>
+          <p style="margin:7px 0 0;color:#9eaa9f;font-size:12px;">One use on workflow prices. Expires ${escapeHtml(expiryDisplay)}. No cash value.</p>
+        </div>
+        <a href="https://geelarkflows.com/" style="display:inline-block;padding:11px 16px;border-radius:8px;background:#816ef5;color:#fff;text-decoration:none;font-weight:800;">Browse workflows →</a>
+      </div>
+    `,
+  });
+}
+
+async function issueReferralReward(db, env, order) {
+  const referralCode = normalizeReferralCode(order?.referred_by_code);
+  const customerEmail = String(order?.customer_email || '').trim().toLowerCase();
+  if (!db || !order?.id || !referralCode || !isValidEmail(customerEmail)) return null;
+
+  const existing = await db.prepare('SELECT id FROM storefront_referral_rewards WHERE qualified_order_id = ?').bind(order.id).first();
+  if (existing) return existing;
+
+  const referrer = await db.prepare(
+    'SELECT id, email FROM storefront_leads WHERE referral_code = ? COLLATE NOCASE LIMIT 1'
+  ).bind(referralCode).first();
+  if (!referrer || String(referrer.email).toLowerCase() === customerEmail) return null;
+
+  const rewardId = 'refrew_' + generateSecureToken(10);
+  const couponId = 'cpn_ref_' + generateSecureToken(10);
+  const couponCode = `REFER10-${generateSecureToken(4).toUpperCase()}`;
+  const expiresAt = new Date(Date.now() + 30 * 86400000).toISOString();
+  const purchaserEmailHash = await sha256Hex(`referral-purchaser:v1:${customerEmail}`);
+
+  try {
+    await db.batch([
+      db.prepare(`
+        INSERT INTO coupon_codes
+          (id, code, description, discount_type, discount_value, min_subtotal_cents, max_redemptions, active, expires_at)
+        VALUES (?, ?, ?, 'percentage', ?, 0, 1, 1, ?)
+      `).bind(couponId, couponCode, 'Purchase-qualified referral reward — one use', REFERRAL_REWARD_PERCENT, expiresAt),
+      db.prepare(`
+        INSERT INTO storefront_referral_rewards
+          (id, referrer_lead_id, qualified_order_id, purchaser_email_hash, reward_coupon_id, reward_coupon_code, reward_email_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).bind(rewardId, referrer.id, order.id, purchaserEmailHash, couponId, couponCode, env?.RESEND_API_KEY ? 'pending' : 'skipped'),
+      db.prepare("UPDATE storefront_leads SET status = 'converted', updated_at = CURRENT_TIMESTAMP WHERE email = ? COLLATE NOCASE")
+        .bind(customerEmail),
+    ]);
+  } catch (error) {
+    const duplicate = await db.prepare('SELECT id FROM storefront_referral_rewards WHERE qualified_order_id = ?').bind(order.id).first();
+    if (duplicate) return duplicate;
+    throw error;
+  }
+
+  if (env?.RESEND_API_KEY) {
+    try {
+      await sendReferralRewardEmail({ resendApiKey: env.RESEND_API_KEY, email: referrer.email, couponCode, expiresAt });
+      await db.prepare("UPDATE storefront_referral_rewards SET reward_email_status = 'sent' WHERE id = ?").bind(rewardId).run();
+    } catch (error) {
+      console.error('Referral reward email warning:', sanitizeProviderError(error));
+      await db.prepare("UPDATE storefront_referral_rewards SET reward_email_status = 'failed' WHERE id = ?").bind(rewardId).run();
+    }
+  }
+
+  return { id: rewardId, couponCode };
+}
+
 /**
  * Send Payment Confirmed & Processing Notification via Resend API (Outbound)
  */
@@ -1557,6 +1790,258 @@ const ALLOWED_FULFILLMENT_TRANSITIONS = {
 // CUSTOMER-FACING STOREFRONT APIS (PRESERVED)
 // ----------------------------------------------------
 
+// POST /api/leads/preview — one-field, voluntary pre-purchase value exchange.
+// The requested preview email is sent whether or not optional marketing consent
+// is granted. Consent is stored separately and is never inferred from silence.
+app.post('/leads/preview', async (c) => {
+  const db = c.env?.DB;
+  if (!db || typeof db.batch !== 'function') {
+    return c.json({ success: false, error: 'Preview requests are temporarily unavailable.' }, 503);
+  }
+
+  try {
+    const body = await c.req.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return c.json({ success: false, error: 'Invalid preview request.' }, 400);
+    }
+
+    // Quietly discard automated honeypot submissions without creating data or
+    // revealing the anti-abuse rule to the sender.
+    if (String(body.company_website || '').trim()) {
+      return c.json({ success: true, data: { email_sent: false } }, 202);
+    }
+
+    if (!isValidEmail(body.email)) {
+      return c.json({ success: false, error: 'Enter a valid email address.' }, 400);
+    }
+    const cleanEmail = String(body.email).trim().toLowerCase();
+    const clientIp = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown';
+    const ipHash = await sha256Hex(`lead-ip:v1:${clientIp}`);
+    const emailHash = await sha256Hex(`lead-email:v1:${cleanEmail}`);
+    if (!(await enforceLeadCaptureRateLimit(db, ipHash, emailHash))) {
+      c.header('Retry-After', '3600');
+      return c.json({ success: false, error: 'Too many preview requests. Please try again later.' }, 429);
+    }
+
+    const selectedProductId = String(body.selected_product_id || '').trim();
+    if (selectedProductId && !AUTHORITATIVE_CATALOG_MAP.has(selectedProductId)) {
+      return c.json({ success: false, error: 'Select a valid workflow preview.' }, 400);
+    }
+    const rawProductIds = Array.isArray(body.product_ids) ? body.product_ids : [];
+    if (rawProductIds.length > 25) {
+      return c.json({ success: false, error: 'Too many workflows were included.' }, 400);
+    }
+    const productIds = [...new Set(rawProductIds.map((value) => String(value || '').trim()).filter(Boolean))];
+    if (productIds.some((productId) => !AUTHORITATIVE_CATALOG_MAP.has(productId))) {
+      return c.json({ success: false, error: 'Unknown workflow in preview request.' }, 400);
+    }
+
+    const visitorId = String(body.visitor_id || '');
+    const visitorHash = validStorefrontClientId(visitorId)
+      ? await sha256Hex(`storefront-visitor:v1:${visitorId}`)
+      : null;
+    const marketingConsent = body.marketing_consent === true ? 1 : 0;
+    const pagePath = normalizeAnalyticsPath(body.page_path);
+    const referrerHost = getAnalyticsReferrerHost(c.req.url, body.landing_referrer_host, c.req.header('referer'));
+    const cf = c.req.raw?.cf || {};
+    const { deviceType, browserFamily, osFamily } = classifyUserAgent(c.req.header('user-agent'));
+
+    let referredByCode = normalizeReferralCode(body.referred_by_code);
+    if (referredByCode) {
+      const referringLead = await db.prepare(
+        'SELECT email FROM storefront_leads WHERE referral_code = ? COLLATE NOCASE LIMIT 1'
+      ).bind(referredByCode).first();
+      if (!referringLead || String(referringLead.email).toLowerCase() === cleanEmail) referredByCode = '';
+    }
+
+    const existing = await db.prepare(
+      'SELECT * FROM storefront_leads WHERE email = ? COLLATE NOCASE LIMIT 1'
+    ).bind(cleanEmail).first();
+    const leadId = existing?.id || ('lead_' + generateSecureToken(12));
+    const couponId = existing?.welcome_coupon_id || ('cpn_lead_' + generateSecureToken(10));
+    const couponCode = existing?.welcome_coupon_code || `START10-${generateSecureToken(4).toUpperCase()}`;
+    const couponExpiresAt = existing?.welcome_coupon_expires_at || new Date(Date.now() + 14 * 86400000).toISOString();
+    const referralCode = existing?.referral_code || `GF${generateSecureToken(5).toUpperCase()}`;
+    const unsubscribeToken = generateSecureToken(24);
+    const unsubscribeTokenHash = await sha256Hex(`lead-unsubscribe:v1:${unsubscribeToken}`);
+    const emailDeliveryStatus = c.env?.RESEND_API_KEY ? 'pending' : 'skipped';
+
+    if (!existing) {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO coupon_codes
+            (id, code, description, discount_type, discount_value, min_subtotal_cents, max_redemptions, active, expires_at)
+          VALUES (?, ?, ?, 'percentage', ?, 0, 1, 1, ?)
+        `).bind(couponId, couponCode, 'Free-preview welcome offer — one use, 14 days', WELCOME_DISCOUNT_PERCENT, couponExpiresAt),
+        db.prepare(`
+          INSERT INTO storefront_leads
+            (id, email, visitor_hash, selected_product_id, cart_product_ids_json, source_path, referrer_host,
+             ip_network, country_code, region, city, device_type, browser_family, os_family,
+             marketing_consent, consent_version, consent_at, welcome_coupon_id, welcome_coupon_code,
+             welcome_coupon_expires_at, referral_code, referred_by_code, unsubscribe_token_hash,
+             email_delivery_status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          leadId,
+          cleanEmail,
+          visitorHash,
+          selectedProductId || null,
+          JSON.stringify(productIds),
+          pagePath,
+          referrerHost,
+          maskIpNetwork(clientIp),
+          String(cf.country || c.req.header('cf-ipcountry') || '').slice(0, 2).toUpperCase() || null,
+          String(cf.region || '').slice(0, 80) || null,
+          String(cf.city || '').slice(0, 80) || null,
+          deviceType,
+          browserFamily,
+          osFamily,
+          marketingConsent,
+          marketingConsent ? LEAD_CONSENT_VERSION : null,
+          marketingConsent ? new Date().toISOString() : null,
+          couponId,
+          couponCode,
+          couponExpiresAt,
+          referralCode,
+          referredByCode || null,
+          unsubscribeTokenHash,
+          emailDeliveryStatus,
+        ),
+      ]);
+    } else {
+      await db.prepare(`
+        UPDATE storefront_leads SET
+          visitor_hash = COALESCE(?, visitor_hash),
+          selected_product_id = COALESCE(?, selected_product_id),
+          cart_product_ids_json = ?,
+          source_path = ?,
+          referrer_host = ?,
+          ip_network = ?,
+          country_code = ?, region = ?, city = ?,
+          device_type = ?, browser_family = ?, os_family = ?,
+          marketing_consent = CASE WHEN ? = 1 THEN 1 ELSE marketing_consent END,
+          consent_version = CASE WHEN ? = 1 THEN ? ELSE consent_version END,
+          consent_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE consent_at END,
+          unsubscribed_at = CASE WHEN ? = 1 THEN NULL ELSE unsubscribed_at END,
+          referred_by_code = COALESCE(referred_by_code, ?),
+          unsubscribe_token_hash = ?,
+          email_delivery_status = ?,
+          email_delivery_error = NULL,
+          last_requested_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).bind(
+        visitorHash,
+        selectedProductId || null,
+        JSON.stringify(productIds),
+        pagePath,
+        referrerHost,
+        maskIpNetwork(clientIp),
+        String(cf.country || c.req.header('cf-ipcountry') || '').slice(0, 2).toUpperCase() || null,
+        String(cf.region || '').slice(0, 80) || null,
+        String(cf.city || '').slice(0, 80) || null,
+        deviceType,
+        browserFamily,
+        osFamily,
+        marketingConsent,
+        marketingConsent,
+        LEAD_CONSENT_VERSION,
+        marketingConsent,
+        marketingConsent,
+        referredByCode || null,
+        unsubscribeTokenHash,
+        emailDeliveryStatus,
+        leadId,
+      ).run();
+    }
+
+    const product = selectedProductId ? AUTHORITATIVE_CATALOG_MAP.get(selectedProductId) : null;
+    const cartProducts = productIds.map((productId) => AUTHORITATIVE_CATALOG_MAP.get(productId)).filter(Boolean);
+    const siteOrigin = getSiteOrigin(c.env);
+    const shareUrl = `${siteOrigin}/?ref=${encodeURIComponent(referralCode)}`;
+    const unsubscribeUrl = `${siteOrigin}/unsubscribe?token=${encodeURIComponent(unsubscribeToken)}`;
+    let emailSent = false;
+    let emailError = null;
+
+    if (c.env?.RESEND_API_KEY) {
+      try {
+        await sendLeadWelcomeEmail({
+          resendApiKey: c.env.RESEND_API_KEY,
+          email: cleanEmail,
+          product,
+          couponCode,
+          couponExpiresAt,
+          shareUrl,
+          unsubscribeUrl,
+          marketingConsent: Boolean(marketingConsent),
+        });
+        emailSent = true;
+      } catch (error) {
+        emailError = sanitizeProviderError(error);
+        console.error('Lead welcome email warning:', emailError);
+      }
+
+      try {
+        await sendLeadInternalEmail({
+          resendApiKey: c.env.RESEND_API_KEY,
+          email: cleanEmail,
+          product,
+          cartProducts,
+          referredByCode,
+          marketingConsent: Boolean(marketingConsent),
+        });
+      } catch (error) {
+        console.error('Lead internal notification warning:', sanitizeProviderError(error));
+      }
+
+      await db.prepare(`
+        UPDATE storefront_leads
+        SET email_delivery_status = ?, email_delivery_error = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).bind(emailSent ? 'sent' : 'failed', emailError, leadId).run();
+    }
+
+    return c.json({
+      success: true,
+      data: {
+        email_sent: emailSent,
+        share_url: shareUrl,
+        discount_percent: WELCOME_DISCOUNT_PERCENT,
+        coupon_expires_at: couponExpiresAt,
+      },
+    }, existing ? 200 : 201);
+  } catch (error) {
+    console.error('Lead preview request error:', sanitizeProviderError(error));
+    return c.json({ success: false, error: 'Your preview request could not be saved. Please try again.' }, 500);
+  }
+});
+
+app.post('/leads/unsubscribe', async (c) => {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Email preferences are temporarily unavailable.' }, 503);
+
+  try {
+    const body = await c.req.json().catch(() => null);
+    const token = String(body?.token || '').trim();
+    if (!/^[a-f0-9]{48}$/i.test(token)) {
+      return c.json({ success: false, error: 'This email preference link is invalid.' }, 400);
+    }
+    const tokenHash = await sha256Hex(`lead-unsubscribe:v1:${token}`);
+    const result = await db.prepare(`
+      UPDATE storefront_leads
+      SET marketing_consent = 0, unsubscribed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+      WHERE unsubscribe_token_hash = ?
+    `).bind(tokenHash).run();
+    if (Number(result?.meta?.changes || result?.changes || 0) < 1) {
+      return c.json({ success: false, error: 'This email preference link is invalid.' }, 400);
+    }
+    return c.json({ success: true, message: 'Optional marketing emails have been disabled.' });
+  } catch (error) {
+    console.error('Lead unsubscribe error:', sanitizeProviderError(error));
+    return c.json({ success: false, error: 'Email preferences could not be updated.' }, 500);
+  }
+});
+
 // POST /api/coupons/validate — previews an authoritative coupon discount
 app.post('/coupons/validate', async (c) => {
   const db = c.env?.DB;
@@ -1640,12 +2125,22 @@ app.post('/checkout/create', async (c) => {
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return c.json({ success: false, error: 'Request body must be a JSON object.' }, 400);
     }
-    const { email, network, payment_network, delivery_method, deliveryMethod, coupon_code, couponCode, cart = [] } = body;
+    const { email, network, payment_network, delivery_method, deliveryMethod, coupon_code, couponCode, referred_by_code, cart = [] } = body;
 
     if (!isValidEmail(email)) {
       return c.json({ success: false, error: 'Please enter a valid email address.' }, 400);
     }
     const cleanEmail = email.toLowerCase().trim();
+    const matchingLead = await db.prepare(
+      'SELECT id, referred_by_code FROM storefront_leads WHERE email = ? COLLATE NOCASE LIMIT 1'
+    ).bind(cleanEmail).first().catch(() => null);
+    let resolvedReferralCode = normalizeReferralCode(referred_by_code || matchingLead?.referred_by_code);
+    if (resolvedReferralCode) {
+      const referrer = await db.prepare(
+        'SELECT email FROM storefront_leads WHERE referral_code = ? COLLATE NOCASE LIMIT 1'
+      ).bind(resolvedReferralCode).first().catch(() => null);
+      if (!referrer || String(referrer.email || '').toLowerCase() === cleanEmail) resolvedReferralCode = '';
+    }
 
     const selectedDeliveryMethod = delivery_method || deliveryMethod;
     if (!selectedDeliveryMethod || !['download_package', 'geelark_setup'].includes(selectedDeliveryMethod)) {
@@ -1794,8 +2289,8 @@ app.post('/checkout/create', async (c) => {
         db.prepare(
           `INSERT INTO orders
            (id, customer_email, total_usd, total_usd_cents, delivery_method, workflow_subtotal, workflow_subtotal_cents, setup_fee, setup_fee_cents,
-            coupon_code, coupon_discount_usd, coupon_discount_cents, status, items, fulfillment_status, status_token_hash)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            coupon_code, coupon_discount_usd, coupon_discount_cents, lead_id, referred_by_code, status, items, fulfillment_status, status_token_hash)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           orderId,
           cleanEmail,
@@ -1809,6 +2304,8 @@ app.post('/checkout/create', async (c) => {
           appliedCoupon?.code || null,
           couponDiscount,
           usdToCents(couponDiscount),
+          matchingLead?.id || null,
+          resolvedReferralCode || null,
           'awaiting_payment',
           JSON.stringify(resolvedCart),
           'not_ready',
@@ -1849,6 +2346,13 @@ app.post('/checkout/create', async (c) => {
             cleanEmail,
             appliedCoupon.discountCents,
           ),
+        );
+      }
+
+      if (matchingLead?.id) {
+        persistenceStatements.push(
+          db.prepare("UPDATE storefront_leads SET status = CASE WHEN status = 'converted' THEN status ELSE 'engaged' END, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .bind(matchingLead.id),
         );
       }
 
@@ -2102,7 +2606,7 @@ app.post('/webhooks/crypto', async (c) => {
     const orderRec = await db.prepare(
       `SELECT id, customer_email, status, items, total_usd, total_usd_cents,
                delivery_method, workflow_subtotal, setup_fee, fulfillment_status,
-               coupon_code, coupon_discount_usd
+               coupon_code, coupon_discount_usd, referred_by_code
        FROM orders WHERE id = ?`
     ).bind(String(order_id)).first();
 
@@ -2156,6 +2660,12 @@ app.post('/webhooks/crypto', async (c) => {
       }
 
       if (!SETTLED_ORDER_STATUSES.has(orderRec.status) && derivedState.orderStatus === 'paid') {
+        try {
+          await issueReferralReward(db, c.env, orderRec);
+        } catch (rewardError) {
+          console.error('Referral reward issuance warning:', sanitizeProviderError(rewardError));
+        }
+
         let parsedItems = [];
         try {
           parsedItems = JSON.parse(orderRec.items || '[]');
@@ -2763,6 +3273,75 @@ app.post('/analytics/cart-state', async (c) => {
   }
 });
 
+// POST /api/analytics/engagement — records only meaningful thresholds, not a
+// raw interaction stream. Engaged follows GA's useful baseline (10 seconds or
+// a second page) and adds a 50% content-scroll signal. Deep scroll is 90%.
+app.post('/analytics/engagement', async (c) => {
+  const db = c.env?.DB;
+  if (!db) return c.json({ success: false, error: 'Analytics unavailable.' }, 503);
+
+  try {
+    const body = await c.req.json().catch(() => null);
+    const visitorId = body?.visitor_id;
+    const sessionId = body?.session_id;
+    const productId = String(body?.product_id || '').trim() || null;
+    if (!validStorefrontClientId(visitorId) || !validStorefrontClientId(sessionId)
+      || (productId && !AUTHORITATIVE_CATALOG_MAP.has(productId))) {
+      return c.json({ success: false, error: 'Invalid engagement state.' }, 400);
+    }
+
+    const clampInteger = (value, minimum, maximum) => Math.min(
+      maximum,
+      Math.max(minimum, Math.round(Number(value) || 0)),
+    );
+    const pageViews = clampInteger(body?.page_views, 1, 50);
+    const scrollPercent = clampInteger(body?.scroll_percent, 0, 100);
+    const engagedSeconds = clampInteger(body?.engaged_seconds, 0, 3600);
+    const pagePath = normalizeAnalyticsPath(body?.page_path);
+    const isEngaged = engagedSeconds >= 10 || pageViews >= 2 || scrollPercent >= 50;
+    const isDeepScroll = scrollPercent >= 90;
+    const visitorHash = await sha256Hex(`storefront-visitor:v1:${visitorId}`);
+    const sessionHash = await sha256Hex(`storefront-session:v1:${sessionId}`);
+
+    await db.prepare(`
+      INSERT INTO storefront_engagement_state
+        (visitor_hash, session_hash, page_views, max_scroll_percent, engaged_seconds,
+         last_path, last_product_id, engaged_at, deep_scrolled_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?,
+              CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END,
+              CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END)
+      ON CONFLICT(visitor_hash) DO UPDATE SET
+        session_hash = excluded.session_hash,
+        page_views = MAX(storefront_engagement_state.page_views, excluded.page_views),
+        max_scroll_percent = MAX(storefront_engagement_state.max_scroll_percent, excluded.max_scroll_percent),
+        engaged_seconds = MAX(storefront_engagement_state.engaged_seconds, excluded.engaged_seconds),
+        last_path = excluded.last_path,
+        last_product_id = COALESCE(excluded.last_product_id, storefront_engagement_state.last_product_id),
+        engaged_at = COALESCE(storefront_engagement_state.engaged_at, excluded.engaged_at),
+        deep_scrolled_at = COALESCE(storefront_engagement_state.deep_scrolled_at, excluded.deep_scrolled_at),
+        updated_at = CURRENT_TIMESTAMP
+    `).bind(
+      visitorHash,
+      sessionHash,
+      pageViews,
+      scrollPercent,
+      engagedSeconds,
+      pagePath,
+      productId,
+      isEngaged ? 1 : 0,
+      isDeepScroll ? 1 : 0,
+    ).run();
+
+    await db.prepare("DELETE FROM storefront_engagement_state WHERE updated_at < datetime('now', '-90 days')")
+      .run()
+      .catch(() => {});
+    return c.json({ success: true, recorded: true, engaged: isEngaged, deep_scrolled: isDeepScroll }, 202);
+  } catch (err) {
+    console.error('Storefront engagement analytics error:', err.message);
+    return c.json({ success: false, error: 'Engagement state could not be recorded.' }, 500);
+  }
+});
+
 // Browser Push opt-in. Permission is requested by the client only after a
 // visitor presses the explicit enable button; this endpoint never prompts.
 app.get('/push/config', async (c) => c.json({
@@ -2859,17 +3438,24 @@ async function sendBrowserPushCampaign(db, env, notificationId) {
   if (!campaign) return { sent: 0, failed: 0, gone: 0, skipped: 0 };
 
   const subscriptionRows = await db.prepare(`
-    SELECT s.*, cs.product_ids_json, cs.item_count, cs.updated_at AS cart_updated_at
+    SELECT s.*, cs.product_ids_json, cs.item_count, cs.updated_at AS cart_updated_at,
+           es.page_views, es.max_scroll_percent, es.engaged_seconds,
+           es.last_product_id, es.engaged_at, es.deep_scrolled_at,
+           es.updated_at AS engagement_updated_at
     FROM storefront_push_subscriptions s
     LEFT JOIN storefront_cart_state cs
       ON cs.visitor_hash = s.visitor_hash
       AND cs.updated_at > datetime('now', '-30 days')
+    LEFT JOIN storefront_engagement_state es
+      ON es.visitor_hash = s.visitor_hash
+      AND es.updated_at > datetime('now', '-30 days')
     WHERE s.active = 1
     ORDER BY s.last_seen_at DESC
     LIMIT 500
   `).all();
 
   const eligible = (subscriptionRows?.results || []).filter((subscription) => {
+    if (!storefrontBehaviorEligible(campaign.behavior_trigger, subscription, campaign.product_id)) return false;
     if (campaign.audience_type === 'active_cart') return Number(subscription.item_count || 0) > 0;
     if (campaign.audience_type === 'product_cart') {
       try {
@@ -3000,6 +3586,13 @@ app.get('/notifications', async (c) => {
     }
     const cartProductIds = new Set(Array.isArray(productIds) ? productIds : []);
     const hasActiveCart = Number(cartState?.item_count || 0) > 0;
+    const engagementState = await db.prepare(`
+      SELECT page_views, max_scroll_percent, engaged_seconds, last_product_id,
+             engaged_at, deep_scrolled_at, updated_at
+      FROM storefront_engagement_state
+      WHERE visitor_hash = ?
+        AND updated_at > datetime('now', '-30 days')
+    `).bind(visitorHash).first();
 
     const rows = await db.prepare(`
       SELECT n.*,
@@ -3025,6 +3618,7 @@ app.get('/notifications', async (c) => {
     const now = Date.now();
     const notifications = (rows?.results || []).filter((row) => {
       if (row.dismissed_at) return false;
+      if (!storefrontBehaviorEligible(row.behavior_trigger, engagementState, row.product_id)) return false;
       if (row.audience_type === 'active_cart' && !hasActiveCart) return false;
       if (row.audience_type === 'product_cart' && !cartProductIds.has(row.product_id)) return false;
       if (row.coupon_id) {
@@ -3470,6 +4064,7 @@ app.get('/admin/analytics', adminAuthMiddleware, async (c) => {
   try {
     await db.prepare("DELETE FROM storefront_analytics_events WHERE created_at < datetime('now', '-90 days')").run();
     await db.prepare("DELETE FROM storefront_cart_state WHERE updated_at < datetime('now', '-90 days')").run();
+    await db.prepare("DELETE FROM storefront_engagement_state WHERE updated_at < datetime('now', '-90 days')").run();
 
     const metrics = await db.prepare(`
       SELECT
@@ -3548,9 +4143,46 @@ app.get('/admin/analytics', adminAuthMiddleware, async (c) => {
       LIMIT 75
     `).bind(since).all();
 
+    const leadMetrics = await db.prepare(`
+      SELECT COUNT(*) AS contact_leads,
+             SUM(CASE WHEN marketing_consent = 1 AND unsubscribed_at IS NULL THEN 1 ELSE 0 END) AS marketing_opt_ins
+      FROM storefront_leads
+      WHERE created_at >= datetime('now', ?)
+    `).bind(since).first();
+
+    const engagementMetrics = await db.prepare(`
+      SELECT
+        SUM(CASE WHEN engaged_at IS NOT NULL THEN 1 ELSE 0 END) AS engaged_visitors,
+        SUM(CASE WHEN max_scroll_percent >= 90 THEN 1 ELSE 0 END) AS deep_scrollers,
+        SUM(CASE WHEN last_product_id IS NOT NULL THEN 1 ELSE 0 END) AS flow_viewers
+      FROM storefront_engagement_state
+      WHERE updated_at >= datetime('now', ?)
+    `).bind(since).first();
+
+    const referralMetrics = await db.prepare(`
+      SELECT COUNT(*) AS rewarded_referrals
+      FROM storefront_referral_rewards
+      WHERE rewarded_at >= datetime('now', ?)
+    `).bind(since).first();
+
+    const leadRows = await db.prepare(`
+      SELECT l.id, l.email, l.visitor_hash, l.selected_product_id, l.cart_product_ids_json,
+             l.source_path, l.referrer_host, l.ip_network, l.country_code, l.region, l.city,
+             l.device_type, l.browser_family, l.os_family, l.marketing_consent,
+             l.unsubscribed_at, l.welcome_coupon_code, l.welcome_coupon_expires_at,
+             l.referral_code, l.referred_by_code, l.email_delivery_status, l.status,
+             l.last_requested_at, l.created_at,
+             (SELECT COUNT(*) FROM storefront_referral_rewards r WHERE r.referrer_lead_id = l.id) AS earned_referrals
+      FROM storefront_leads l
+      WHERE l.created_at >= datetime('now', ?)
+      ORDER BY l.created_at DESC
+      LIMIT 100
+    `).bind(since).all();
+
     const uniqueVisitors = Number(metrics?.unique_visitors || 0);
     const cartVisitors = Number(metrics?.cart_visitors || 0);
     const cartAdditions = Number(metrics?.cart_additions || 0);
+    const engagedVisitors = Number(engagementMetrics?.engaged_visitors || 0);
     const activeCarts = activeCartRows?.results || [];
 
     return c.json({
@@ -3560,10 +4192,17 @@ app.get('/admin/analytics', adminAuthMiddleware, async (c) => {
         metrics: {
           unique_visitors: uniqueVisitors,
           page_views: Number(metrics?.page_views || 0),
+          engaged_visitors: engagedVisitors,
+          deep_scrollers: Number(engagementMetrics?.deep_scrollers || 0),
+          flow_viewers: Number(engagementMetrics?.flow_viewers || 0),
           cart_visitors: cartVisitors,
           cart_additions: cartAdditions,
           active_carts: activeCarts.length,
+          contact_leads: Number(leadMetrics?.contact_leads || 0),
+          marketing_opt_ins: Number(leadMetrics?.marketing_opt_ins || 0),
+          rewarded_referrals: Number(referralMetrics?.rewarded_referrals || 0),
           cart_visitor_rate: uniqueVisitors > 0 ? Number(((cartVisitors / uniqueVisitors) * 100).toFixed(1)) : 0,
+          engagement_rate: uniqueVisitors > 0 ? Number(((engagedVisitors / uniqueVisitors) * 100).toFixed(1)) : 0,
         },
         daily: (dailyRows?.results || []).map((row) => ({
           day: row.day,
@@ -3622,6 +4261,42 @@ app.get('/admin/analytics', adminAuthMiddleware, async (c) => {
             browser_family: row.browser_family,
             os_family: row.os_family,
             updated_at: row.updated_at,
+          };
+        }),
+        contact_leads: (leadRows?.results || []).map((row) => {
+          let cartProductIds = [];
+          try { cartProductIds = JSON.parse(row.cart_product_ids_json || '[]'); } catch (error) {}
+          return {
+            id: row.id,
+            email: row.email,
+            visitor_id: String(row.visitor_hash || '').slice(0, 12),
+            selected_product_id: row.selected_product_id,
+            selected_product_title: row.selected_product_id
+              ? (AUTHORITATIVE_CATALOG_MAP.get(row.selected_product_id)?.title || row.selected_product_id)
+              : null,
+            cart_items: cartProductIds.map((productId) => ({
+              product_id: productId,
+              title: AUTHORITATIVE_CATALOG_MAP.get(productId)?.title || productId,
+            })),
+            source_path: row.source_path,
+            referrer_host: row.referrer_host,
+            ip_network: row.ip_network,
+            country_code: row.country_code,
+            region: row.region,
+            city: row.city,
+            device_type: row.device_type,
+            browser_family: row.browser_family,
+            os_family: row.os_family,
+            marketing_consent: Number(row.marketing_consent) === 1 && !row.unsubscribed_at,
+            welcome_coupon_code: row.welcome_coupon_code,
+            welcome_coupon_expires_at: row.welcome_coupon_expires_at,
+            referral_code: row.referral_code,
+            referred_by_code: row.referred_by_code,
+            earned_referrals: Number(row.earned_referrals || 0),
+            email_delivery_status: row.email_delivery_status,
+            status: row.status,
+            last_requested_at: row.last_requested_at,
+            created_at: row.created_at,
           };
         }),
         recent_cart_additions: (recentRows?.results || []).map((row) => ({
@@ -4078,7 +4753,7 @@ app.post('/admin/payments/:id/sync', adminAuthMiddleware, async (c) => {
     }
 
     const order = await db.prepare(
-      `SELECT id, status, fulfillment_status, total_usd, total_usd_cents, delivery_method
+      `SELECT id, customer_email, status, fulfillment_status, total_usd, total_usd_cents, delivery_method, referred_by_code
        FROM orders WHERE id = ?`
     ).bind(payment.order_id).first();
     const snapshotVerification = verifyProviderInvoiceSnapshot(nowPayData, {
@@ -4167,6 +4842,14 @@ app.post('/admin/payments/:id/sync', adminAuthMiddleware, async (c) => {
         });
       }
 
+      if (!SETTLED_ORDER_STATUSES.has(order.status) && derivedState.orderStatus === 'paid') {
+        try {
+          await issueReferralReward(db, c.env, order);
+        } catch (rewardError) {
+          console.error('Referral reward issuance warning:', sanitizeProviderError(rewardError));
+        }
+      }
+
       return c.json({
         success: true,
         paymentId: actualPayId,
@@ -4209,7 +4892,9 @@ app.post('/admin/payments/:id/manual-verify', adminAuthMiddleware, requireRole('
 
     const finalTxHash = tx_hash || payment.tx_hash || 'MANUAL_VERIFIED_BY_' + user.email;
 
-    const order = await db.prepare('SELECT delivery_method FROM orders WHERE id = ?').bind(payment.order_id).first();
+    const order = await db.prepare(
+      'SELECT id, customer_email, status, delivery_method, referred_by_code FROM orders WHERE id = ?'
+    ).bind(payment.order_id).first();
     const fulfillmentStatus = order?.delivery_method === 'geelark_setup' ? 'setup_pending' : 'fulfillment_pending';
 
     await db.batch([
@@ -4238,6 +4923,14 @@ app.post('/admin/payments/:id/manual-verify', adminAuthMiddleware, requireRole('
       reason: reason.trim(),
       metadata: { orderId: payment.order_id, tx_hash: finalTxHash },
     });
+
+    if (!SETTLED_ORDER_STATUSES.has(order?.status)) {
+      try {
+        await issueReferralReward(db, c.env, order);
+      } catch (rewardError) {
+        console.error('Referral reward issuance warning:', sanitizeProviderError(rewardError));
+      }
+    }
 
     return c.json({
       success: true,
@@ -4717,6 +5410,7 @@ app.post('/admin/notifications', adminAuthMiddleware, requireRole('SUPER_ADMIN')
     const title = String(body.title || '').trim();
     const message = String(body.message || '').trim();
     const audienceType = String(body.audience_type || '').trim();
+    const behaviorTrigger = String(body.behavior_trigger || 'immediate').trim();
     const productId = String(body.product_id || '').trim() || null;
     const couponId = String(body.coupon_id || '').trim() || null;
     const ctaLabel = String(body.cta_label || '').trim() || null;
@@ -4732,8 +5426,14 @@ app.post('/admin/notifications', adminAuthMiddleware, requireRole('SUPER_ADMIN')
     if (!['all', 'active_cart', 'product_cart'].includes(audienceType)) {
       return c.json({ success: false, error: 'Choose a valid notification audience.' }, 400);
     }
+    if (!['immediate', 'engaged', 'deep_scroll', 'product_view'].includes(behaviorTrigger)) {
+      return c.json({ success: false, error: 'Choose a valid notification behavior.' }, 400);
+    }
     if (audienceType === 'product_cart' && !AUTHORITATIVE_CATALOG_MAP.has(productId)) {
       return c.json({ success: false, error: 'Choose a valid flow for product-cart targeting.' }, 400);
+    }
+    if (behaviorTrigger === 'product_view' && !AUTHORITATIVE_CATALOG_MAP.has(productId)) {
+      return c.json({ success: false, error: 'Choose a valid flow for product-view targeting.' }, 400);
     }
     if (ctaLabel && (ctaLabel.length < 2 || ctaLabel.length > 40)) {
       return c.json({ success: false, error: 'CTA label must contain 2–40 characters.' }, 400);
@@ -4772,15 +5472,16 @@ app.post('/admin/notifications', adminAuthMiddleware, requireRole('SUPER_ADMIN')
     const notificationId = 'ntf_' + generateSecureToken(10);
     await db.prepare(`
       INSERT INTO storefront_notifications
-        (id, title, message, audience_type, product_id, coupon_id, cta_label,
+        (id, title, message, audience_type, behavior_trigger, product_id, coupon_id, cta_label,
          cta_url, push_enabled, active, starts_at, expires_at, created_by_admin_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       notificationId,
       title,
       message,
       audienceType,
-      audienceType === 'product_cart' ? productId : null,
+      behaviorTrigger,
+      audienceType === 'product_cart' || behaviorTrigger === 'product_view' ? productId : null,
       couponId,
       ctaLabel,
       ctaUrl,
@@ -4800,7 +5501,13 @@ app.post('/admin/notifications', adminAuthMiddleware, requireRole('SUPER_ADMIN')
       entityType: 'notification',
       entityId: notificationId,
       newState: title,
-      metadata: { audienceType, productId: audienceType === 'product_cart' ? productId : null, couponId, pushEnabled },
+      metadata: {
+        audienceType,
+        behaviorTrigger,
+        productId: audienceType === 'product_cart' || behaviorTrigger === 'product_view' ? productId : null,
+        couponId,
+        pushEnabled,
+      },
     });
 
     const push = pushEnabled
@@ -5661,6 +6368,7 @@ const PUBLIC_SPA_PATHS = new Set([
   '/terms',
   '/privacy',
   '/refund-policy',
+  '/unsubscribe',
 ]);
 
 function isKnownSpaPath(pathname) {

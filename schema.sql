@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS orders (
   coupon_code TEXT,
   coupon_discount_usd REAL NOT NULL DEFAULT 0,
   coupon_discount_cents INTEGER NOT NULL DEFAULT 0,
+  lead_id TEXT,
+  referred_by_code TEXT,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'awaiting_payment', 'paid', 'processing', 'completed', 'cancelled', 'refunded', 'failed')),
   items TEXT NOT NULL,
   fulfillment_status TEXT NOT NULL DEFAULT 'not_ready' CHECK (fulfillment_status IN ('not_ready', 'fulfillment_pending', 'package_preparing', 'package_delivered', 'setup_pending', 'setup_in_progress', 'setup_completed', 'failed')),
@@ -329,6 +331,26 @@ CREATE INDEX IF NOT EXISTS idx_cart_state_updated_at ON storefront_cart_state(up
 CREATE INDEX IF NOT EXISTS idx_cart_state_item_updated ON storefront_cart_state(item_count, updated_at);
 CREATE INDEX IF NOT EXISTS idx_cart_state_country_updated ON storefront_cart_state(country_code, updated_at);
 
+-- Meaningful storefront engagement, stored as thresholds rather than a raw
+-- interaction replay. This supports respectful post-engagement messaging.
+CREATE TABLE IF NOT EXISTS storefront_engagement_state (
+  visitor_hash TEXT PRIMARY KEY,
+  session_hash TEXT NOT NULL,
+  page_views INTEGER NOT NULL DEFAULT 1 CHECK (page_views >= 1 AND page_views <= 50),
+  max_scroll_percent INTEGER NOT NULL DEFAULT 0 CHECK (max_scroll_percent >= 0 AND max_scroll_percent <= 100),
+  engaged_seconds INTEGER NOT NULL DEFAULT 0 CHECK (engaged_seconds >= 0 AND engaged_seconds <= 3600),
+  last_path TEXT NOT NULL,
+  last_product_id TEXT,
+  engaged_at DATETIME,
+  deep_scrolled_at DATETIME,
+  first_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_engagement_updated ON storefront_engagement_state(updated_at);
+CREATE INDEX IF NOT EXISTS idx_engagement_qualified ON storefront_engagement_state(engaged_at, deep_scrolled_at, updated_at);
+CREATE INDEX IF NOT EXISTS idx_engagement_product ON storefront_engagement_state(last_product_id, updated_at);
+
 -- In-site notification campaigns. Visitors are addressed only through the same
 -- pseudonymous browser identifier used by first-party storefront analytics.
 CREATE TABLE IF NOT EXISTS storefront_notifications (
@@ -336,6 +358,7 @@ CREATE TABLE IF NOT EXISTS storefront_notifications (
   title TEXT NOT NULL,
   message TEXT NOT NULL,
   audience_type TEXT NOT NULL CHECK (audience_type IN ('all', 'active_cart', 'product_cart')),
+  behavior_trigger TEXT NOT NULL DEFAULT 'immediate' CHECK (behavior_trigger IN ('immediate', 'engaged', 'deep_scroll', 'product_view')),
   product_id TEXT,
   coupon_id TEXT,
   cta_label TEXT,
@@ -364,6 +387,7 @@ CREATE TABLE IF NOT EXISTS storefront_notification_receipts (
 
 CREATE INDEX IF NOT EXISTS idx_notifications_active_schedule ON storefront_notifications(active, starts_at, expires_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_audience ON storefront_notifications(audience_type, product_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_behavior ON storefront_notifications(behavior_trigger, audience_type, product_id);
 CREATE INDEX IF NOT EXISTS idx_notification_receipts_visitor ON storefront_notification_receipts(visitor_hash, dismissed_at, read_at);
 CREATE INDEX IF NOT EXISTS idx_notification_receipts_delivered ON storefront_notification_receipts(notification_id, delivered_at);
 
@@ -400,3 +424,60 @@ CREATE TABLE IF NOT EXISTS storefront_push_deliveries (
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_active_seen ON storefront_push_subscriptions(active, last_seen_at);
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_visitor ON storefront_push_subscriptions(visitor_hash, active);
 CREATE INDEX IF NOT EXISTS idx_push_deliveries_notification ON storefront_push_deliveries(notification_id, status);
+
+-- Voluntary pre-purchase leads. Email is retained because the visitor asks us
+-- to deliver a free workflow preview and personal offer to that address.
+CREATE TABLE IF NOT EXISTS storefront_leads (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  visitor_hash TEXT,
+  selected_product_id TEXT,
+  cart_product_ids_json TEXT NOT NULL DEFAULT '[]',
+  source_path TEXT,
+  referrer_host TEXT,
+  ip_network TEXT,
+  country_code TEXT,
+  region TEXT,
+  city TEXT,
+  device_type TEXT,
+  browser_family TEXT,
+  os_family TEXT,
+  marketing_consent INTEGER NOT NULL DEFAULT 0 CHECK (marketing_consent IN (0, 1)),
+  consent_version TEXT,
+  consent_at DATETIME,
+  unsubscribed_at DATETIME,
+  welcome_coupon_id TEXT NOT NULL,
+  welcome_coupon_code TEXT NOT NULL,
+  welcome_coupon_expires_at DATETIME NOT NULL,
+  referral_code TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  referred_by_code TEXT,
+  unsubscribe_token_hash TEXT NOT NULL UNIQUE,
+  email_delivery_status TEXT NOT NULL DEFAULT 'pending' CHECK (email_delivery_status IN ('pending', 'sent', 'failed', 'skipped')),
+  email_delivery_error TEXT,
+  status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'engaged', 'converted')),
+  last_requested_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (welcome_coupon_id) REFERENCES coupon_codes(id) ON DELETE RESTRICT
+);
+
+-- A referral becomes rewardable only after a stored order reaches a verified
+-- paid state. Each order and reward coupon can qualify at most once.
+CREATE TABLE IF NOT EXISTS storefront_referral_rewards (
+  id TEXT PRIMARY KEY,
+  referrer_lead_id TEXT NOT NULL,
+  qualified_order_id TEXT NOT NULL UNIQUE,
+  purchaser_email_hash TEXT NOT NULL,
+  reward_coupon_id TEXT NOT NULL UNIQUE,
+  reward_coupon_code TEXT NOT NULL,
+  reward_email_status TEXT NOT NULL DEFAULT 'pending' CHECK (reward_email_status IN ('pending', 'sent', 'failed', 'skipped')),
+  rewarded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (referrer_lead_id) REFERENCES storefront_leads(id) ON DELETE RESTRICT,
+  FOREIGN KEY (qualified_order_id) REFERENCES orders(id) ON DELETE RESTRICT,
+  FOREIGN KEY (reward_coupon_id) REFERENCES coupon_codes(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_storefront_leads_created ON storefront_leads(created_at);
+CREATE INDEX IF NOT EXISTS idx_storefront_leads_visitor ON storefront_leads(visitor_hash);
+CREATE INDEX IF NOT EXISTS idx_storefront_leads_referrer ON storefront_leads(referred_by_code);
+CREATE INDEX IF NOT EXISTS idx_referral_rewards_referrer ON storefront_referral_rewards(referrer_lead_id, rewarded_at);

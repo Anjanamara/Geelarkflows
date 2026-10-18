@@ -6,22 +6,35 @@ import { redirectIfUnauthorized } from '../apiUtils';
 const EMPTY_FORM = {
   title: '',
   message: '',
-  audience_type: 'active_cart',
+  targeting_preset: 'engaged',
+  audience_type: 'all',
+  behavior_trigger: 'engaged',
   product_id: '',
   coupon_id: '',
-  cta_label: 'View cart',
-  cta_url: '/cart',
+  cta_label: 'Explore flows',
+  cta_url: '/',
   starts_at: '',
   expires_at: '',
   push_enabled: false,
   active: true,
 };
 
-const AUDIENCE_LABELS = {
-  all: 'All storefront visitors',
-  active_cart: 'Visitors with active carts',
-  product_cart: 'Carts containing one flow',
+const TARGETING_PRESETS = {
+  engaged: { audience_type: 'all', behavior_trigger: 'engaged', label: 'Engaged visitors', help: 'After 10 seconds, a second page, or 50% scroll. Recommended for useful offers.' },
+  deep_scroll: { audience_type: 'all', behavior_trigger: 'deep_scroll', label: 'Deep scrollers', help: 'Only visitors who reached 90% of a page.' },
+  product_view: { audience_type: 'all', behavior_trigger: 'product_view', label: 'Viewed a selected flow', help: 'People who opened one specific workflow page.' },
+  active_cart: { audience_type: 'active_cart', behavior_trigger: 'immediate', label: 'Any active cart', help: 'People who currently have at least one flow in their cart.' },
+  product_cart: { audience_type: 'product_cart', behavior_trigger: 'immediate', label: 'Selected flow in cart', help: 'People whose cart contains one specific workflow.' },
+  all: { audience_type: 'all', behavior_trigger: 'immediate', label: 'Every visitor immediately', help: 'Broadest reach. Use sparingly for essential storefront updates.' },
 };
+
+function notificationAudienceLabel(notification) {
+  const match = Object.values(TARGETING_PRESETS).find((preset) => (
+    preset.audience_type === notification.audience_type
+    && preset.behavior_trigger === (notification.behavior_trigger || 'immediate')
+  ));
+  return match?.label || 'Custom audience';
+}
 
 export default function AdminNotifications({ lastSyncedAt, user }) {
   const [notifications, setNotifications] = useState([]);
@@ -79,9 +92,20 @@ export default function AdminNotifications({ lastSyncedAt, user }) {
   const updateForm = (field, value) => {
     setForm((current) => {
       const next = { ...current, [field]: value };
+      if (field === 'targeting_preset') {
+        const preset = TARGETING_PRESETS[value];
+        next.audience_type = preset.audience_type;
+        next.behavior_trigger = preset.behavior_trigger;
+        next.product_id = ['product_view', 'product_cart'].includes(value) ? current.product_id : '';
+        if (!current.coupon_id) {
+          next.cta_label = ['active_cart', 'product_cart'].includes(value) ? 'View cart' : 'Explore flows';
+          next.cta_url = ['active_cart', 'product_cart'].includes(value) ? '/cart' : '/';
+        }
+      }
       if (field === 'coupon_id') {
-        next.cta_label = value ? 'Use coupon' : 'View cart';
-        next.cta_url = value ? '/checkout' : '/cart';
+        const cartTarget = ['active_cart', 'product_cart'].includes(current.targeting_preset);
+        next.cta_label = value ? (cartTarget ? 'Use coupon' : 'Explore with coupon') : (cartTarget ? 'View cart' : 'Explore flows');
+        next.cta_url = value && cartTarget ? '/checkout' : (cartTarget ? '/cart' : '/');
       }
       return next;
     });
@@ -139,7 +163,7 @@ export default function AdminNotifications({ lastSyncedAt, user }) {
   return (
     <div className="notification-admin-page">
       <div className="analytics-page-intro">
-        <div><span className="analytics-kicker">FIRST-PARTY STOREFRONT MESSAGING</span><h2>Website notifications</h2><p>Publish Instagram-style in-site alerts and optional browser push. Target everyone, anonymous visitors with an active cart, or carts containing one selected flow.</p></div>
+        <div><span className="analytics-kicker">FIRST-PARTY STOREFRONT MESSAGING</span><h2>Website notifications</h2><p>Reach anonymous visitors by meaningful intent: time on site, pages viewed, scroll depth, a viewed flow, or an active cart. Browser push remains opt-in.</p></div>
       </div>
 
       <div className="analytics-stats-grid">
@@ -153,14 +177,14 @@ export default function AdminNotifications({ lastSyncedAt, user }) {
       {canManage && (
         <form className="table-panel notification-create-panel" onSubmit={handleCreate}>
           <div className="table-header-controls">
-            <div><strong>Create Notification</strong><p className="coupon-panel-copy">Coupon campaigns appear only while the linked coupon remains usable.</p></div>
+            <div><strong>Create Notification</strong><p className="coupon-panel-copy">Start with engaged visitors. Use immediate broadcast only for essential updates; coupon campaigns stop when the coupon is unavailable.</p></div>
             <button type="submit" className="btn-admin-primary" disabled={saving}>{saving ? 'Publishing…' : 'Publish Notification'}</button>
           </div>
           <div className="notification-form-grid">
             <label className="coupon-field"><span>Title</span><input className="admin-input" value={form.title} onChange={(event) => updateForm('title', event.target.value)} placeholder="A cart offer for you" minLength={3} maxLength={80} required /></label>
             <label className="coupon-field notification-message-field"><span>Message</span><textarea className="admin-input" value={form.message} onChange={(event) => updateForm('message', event.target.value)} placeholder="Complete your cart with this limited coupon." minLength={5} maxLength={280} required /><small>{form.message.length}/280</small></label>
-            <label className="coupon-field"><span>Audience</span><select className="admin-select" value={form.audience_type} onChange={(event) => updateForm('audience_type', event.target.value)}><option value="active_cart">Visitors with active carts</option><option value="product_cart">Carts containing one flow</option><option value="all">All storefront visitors</option></select></label>
-            {form.audience_type === 'product_cart' && <label className="coupon-field"><span>Flow in Cart</span><select className="admin-select" value={form.product_id} onChange={(event) => updateForm('product_id', event.target.value)} required><option value="">Choose flow…</option>{products.map((product) => <option value={product.id} key={product.id}>{product.title}</option>)}</select></label>}
+            <label className="coupon-field notification-target-field"><span>Who should receive it?</span><select className="admin-select" value={form.targeting_preset} onChange={(event) => updateForm('targeting_preset', event.target.value)}>{Object.entries(TARGETING_PRESETS).map(([value, preset]) => <option value={value} key={value}>{preset.label}</option>)}</select><small>{TARGETING_PRESETS[form.targeting_preset].help}</small></label>
+            {['product_view', 'product_cart'].includes(form.targeting_preset) && <label className="coupon-field"><span>{form.targeting_preset === 'product_view' ? 'Flow Viewed' : 'Flow in Cart'}</span><select className="admin-select" value={form.product_id} onChange={(event) => updateForm('product_id', event.target.value)} required><option value="">Choose flow…</option>{products.map((product) => <option value={product.id} key={product.id}>{product.title}</option>)}</select></label>}
             <label className="coupon-field"><span>Coupon (Optional)</span><select className="admin-select" value={form.coupon_id} onChange={(event) => updateForm('coupon_id', event.target.value)}><option value="">No coupon</option>{coupons.filter((coupon) => coupon.active).map((coupon) => <option value={coupon.id} key={coupon.id}>{coupon.code} · {coupon.discount_value_display}</option>)}</select></label>
             <label className="coupon-field"><span>Button Label</span><input className="admin-input" value={form.cta_label} onChange={(event) => updateForm('cta_label', event.target.value)} maxLength={40} placeholder="View cart" /></label>
             <label className="coupon-field"><span>Internal Button Path</span><input className="admin-input font-mono" value={form.cta_url} onChange={(event) => updateForm('cta_url', event.target.value)} maxLength={200} placeholder="/cart" required /></label>
@@ -188,7 +212,7 @@ export default function AdminNotifications({ lastSyncedAt, user }) {
                   : notifications.map((notification) => (
                     <tr key={notification.id}>
                       <td><strong>{notification.title}</strong><small className="notification-admin-message">{notification.message}</small></td>
-                      <td>{AUDIENCE_LABELS[notification.audience_type] || notification.audience_type}{notification.product_id && <small className="analytics-table-note">{products.find((product) => product.id === notification.product_id)?.title || notification.product_id}</small>}</td>
+                      <td>{notificationAudienceLabel(notification)}{notification.product_id && <small className="analytics-table-note">{products.find((product) => product.id === notification.product_id)?.title || notification.product_id}</small>}</td>
                       <td>{notification.coupon_code ? <strong className="font-mono coupon-code-token">{notification.coupon_code}</strong> : '—'}</td>
                       <td><small>Starts: {formatDate(notification.starts_at)}</small><small className="analytics-table-note">Ends: {formatDate(notification.expires_at)}</small></td>
                       <td className="font-mono">{notification.read_count} read<small className="analytics-table-note">{notification.delivered_count} delivered · {notification.dismissed_count} dismissed</small></td>

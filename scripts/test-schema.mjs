@@ -7,19 +7,22 @@ const db = new DatabaseSync(':memory:');
 db.exec(schema);
 
 const requiredColumns = {
-  orders: ['total_usd_cents', 'status_token_hash', 'fulfillment_status', 'coupon_code', 'coupon_discount_usd', 'coupon_discount_cents'],
+  orders: ['total_usd_cents', 'status_token_hash', 'fulfillment_status', 'coupon_code', 'coupon_discount_usd', 'coupon_discount_cents', 'lead_id', 'referred_by_code'],
   crypto_payments: ['network_id', 'provider_currency', 'pay_amount_crypto_text', 'expected_price_usd_cents'],
   order_fulfillment_logs: ['updated_at'],
   order_download_tokens: ['token_hash', 'expires_at', 'download_count'],
   api_rate_limits: ['window_started_at', 'request_count'],
   storefront_analytics_events: ['dedupe_key', 'event_type', 'visitor_hash', 'session_hash', 'product_id', 'page_path', 'ip_network', 'device_type'],
   storefront_cart_state: ['visitor_hash', 'session_hash', 'product_ids_json', 'item_count', 'cart_value_cents', 'country_code', 'updated_at'],
+  storefront_engagement_state: ['visitor_hash', 'session_hash', 'page_views', 'max_scroll_percent', 'engaged_seconds', 'last_path', 'last_product_id', 'engaged_at', 'deep_scrolled_at'],
   coupon_codes: ['code', 'discount_type', 'discount_value', 'min_subtotal_cents', 'max_redemptions', 'active', 'starts_at', 'expires_at'],
   coupon_redemptions: ['coupon_id', 'order_id', 'customer_email', 'discount_cents'],
-  storefront_notifications: ['title', 'message', 'audience_type', 'product_id', 'coupon_id', 'cta_url', 'push_enabled', 'push_sent_at', 'active'],
+  storefront_notifications: ['title', 'message', 'audience_type', 'behavior_trigger', 'product_id', 'coupon_id', 'cta_url', 'push_enabled', 'push_sent_at', 'active'],
   storefront_notification_receipts: ['notification_id', 'visitor_hash', 'delivered_at', 'read_at', 'dismissed_at'],
   storefront_push_subscriptions: ['endpoint_hash', 'endpoint', 'p256dh_key', 'auth_key', 'visitor_hash', 'active', 'revoked_at'],
   storefront_push_deliveries: ['notification_id', 'subscription_id', 'status', 'response_status', 'error_message'],
+  storefront_leads: ['email', 'marketing_consent', 'welcome_coupon_id', 'referral_code', 'referred_by_code', 'unsubscribe_token_hash', 'email_delivery_status'],
+  storefront_referral_rewards: ['referrer_lead_id', 'qualified_order_id', 'purchaser_email_hash', 'reward_coupon_id', 'reward_email_status'],
 };
 
 for (const [table, columns] of Object.entries(requiredColumns)) {
@@ -53,6 +56,8 @@ migrationDb.exec(fs.readFileSync('migrations/0001_security_hardening.sql', 'utf8
 migrationDb.exec(fs.readFileSync('migrations/0003_coupon_codes.sql', 'utf8'));
 migrationDb.exec(fs.readFileSync('migrations/0005_storefront_notifications.sql', 'utf8'));
 migrationDb.exec(fs.readFileSync('migrations/0006_browser_push.sql', 'utf8'));
+migrationDb.exec(fs.readFileSync('migrations/0007_lead_magnet_referrals.sql', 'utf8'));
+migrationDb.exec(fs.readFileSync('migrations/0008_behavior_targeting.sql', 'utf8'));
 const migratedOrder = migrationDb.prepare('SELECT * FROM orders WHERE id = ?').get('ord_old');
 const migratedPayment = migrationDb.prepare('SELECT * FROM crypto_payments WHERE id = ?').get('pay_old');
 assert.equal(migratedOrder.total_usd_cents, 100000);
@@ -70,6 +75,13 @@ assert(couponMigrationTables.has('storefront_notifications'));
 assert(couponMigrationTables.has('storefront_notification_receipts'));
 assert(couponMigrationTables.has('storefront_push_subscriptions'));
 assert(couponMigrationTables.has('storefront_push_deliveries'));
+assert(couponMigrationTables.has('storefront_leads'));
+assert(couponMigrationTables.has('storefront_referral_rewards'));
+assert(couponMigrationTables.has('storefront_engagement_state'));
+const migratedNotificationColumns = new Set(
+  migrationDb.prepare('PRAGMA table_info(storefront_notifications)').all().map((row) => row.name),
+);
+assert(migratedNotificationColumns.has('behavior_trigger'));
 const couponTrigger = migrationDb.prepare(
   "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'coupon_redemptions_validate_availability'",
 ).get();

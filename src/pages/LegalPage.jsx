@@ -83,7 +83,7 @@ export default function LegalPage({ type = 'terms', navigate }) {
                 <p className="legal-doc-summary">
                   Terms governing the purchase, licensing, and usage of GeeLark automation workflow packages.
                 </p>
-                <div className="legal-meta-date">Last Updated: August 25, 2026 · Independent operator: GeeLark Flows · support@geelarkflows.com</div>
+                <div className="legal-meta-date">Last Updated: September 14, 2026 · Independent operator: GeeLark Flows · support@geelarkflows.com</div>
               </div>
 
               <div className="legal-body-content">
@@ -176,7 +176,17 @@ export default function LegalPage({ type = 'terms', navigate }) {
                 </section>
 
                 <section className="legal-section">
-                  <h2>9. Disputes, Changes & Contact</h2>
+                  <h2>9. Welcome & Referral Discounts</h2>
+                  <p>
+                    Visitors may voluntarily request a free workflow preview and receive a personal, one-use welcome coupon. A referral link allows a referred visitor to request their own welcome coupon. When a referred visitor completes a confirmed paid order, the original referrer receives one personal, one-use reward coupon by email. Unless a specific offer says otherwise, welcome coupons provide 10% off workflow prices for 14 days and referral reward coupons provide 10% off workflow prices for 30 days.
+                  </p>
+                  <p>
+                    Referral rewards are discounts, not cash; have no cash value; cannot be transferred, combined, or exchanged; and are limited to one reward per independently confirmed referred order. Self-referrals, duplicate identities, automated submissions, misleading promotion, and abuse may be rejected. Anyone publicly recommending GeeLark Flows because they may receive a reward should clearly disclose that relationship near the recommendation.
+                  </p>
+                </section>
+
+                <section className="legal-section">
+                  <h2>10. Disputes, Changes & Contact</h2>
                   <p>
                     Contact <code>support@geelarkflows.com</code> first so we can attempt an informal resolution. Applicable law and any non-waivable consumer protections continue to apply. We may update these Terms prospectively by publishing a revised date; the terms shown when an order is placed govern that order unless law requires otherwise.
                   </p>
@@ -193,7 +203,7 @@ export default function LegalPage({ type = 'terms', navigate }) {
                 <p className="legal-doc-summary">
                   How GeeLark Flows collects, processes, and protects customer emails, order records, and technical request data.
                 </p>
-                <div className="legal-meta-date">Last Updated: September 2, 2026 · Independent operator: GeeLark Flows · support@geelarkflows.com</div>
+                <div className="legal-meta-date">Last Updated: September 14, 2026 · Independent operator: GeeLark Flows · support@geelarkflows.com</div>
               </div>
 
               <div className="legal-body-content">
@@ -211,9 +221,10 @@ export default function LegalPage({ type = 'terms', navigate }) {
                     <li><strong>Cryptocurrency Payments:</strong> Payment metadata including cryptocurrency network, generated deposit address, payment amount, invoice status, and blockchain transaction hash. We do not collect or store private wallet keys or bank details.</li>
                     <li><strong>Custom Automation Inquiries:</strong> Name, email address, and project requirements. For abuse prevention and rate limiting, we derive and store a pseudonymous technical identifier from the connecting IP address. The application does not persist the raw IP address with the request. (Pseudonymous data is not anonymous data.)</li>
                     <li><strong>Customer Communications:</strong> Inbound emails, subjects, message content, and attachments sent to <code>support@geelarkflows.com</code>.</li>
+                    <li><strong>Free Preview & Referral Requests:</strong> Email address voluntarily provided to receive a requested workflow preview, selected workflow and current cart context, personal welcome coupon, referral code, referring code, approximate acquisition source and location, email-delivery status, and whether the visitor separately opted into optional marketing. Referral rewards record that a referred order was confirmed, but the purchaser's email is hashed in the referral-reward record and is not disclosed to the referrer.</li>
                     <li><strong>Browser Storage:</strong> Functional browser local storage to retain cart contents and active payment screens across refreshes. No marketing or advertising cookies are used.</li>
-                    <li><strong>First-Party Storefront Analytics:</strong> We use a random anonymous browser identifier to count approximate unique visitors, page views, flow additions, and the last-known contents and server-calculated value of a browser cart. We also retain the page path, referring website host, a masked network range (not the full visitor IP address), coarse country/region/city supplied by Cloudflare, and generalized device, browser, and operating-system families. Global Privacy Control and browser Do Not Track signals disable this collection.</li>
-                    <li><strong>In-Site Notifications:</strong> The same pseudonymous browser identifier and last-known cart state may be used to select relevant messages for the notification bell, including an offer tied to a flow already in the cart. We record whether a message was delivered, read, or dismissed; we do not need an email address for this feature. Global Privacy Control and browser Do Not Track signals disable the notification feed and its targeting.</li>
+                    <li><strong>First-Party Storefront Analytics:</strong> We use a random pseudonymous browser identifier to count approximate unique visitors, page views, flow additions, and the last-known contents and server-calculated value of a browser cart. We also record limited engagement thresholds—10 seconds of active viewing, a second page, 50% scroll, 90% scroll, and the last workflow detail page viewed. We do not record cursor movement, keystrokes, form contents, or session replay. We retain the page path, referring website host, a masked network range (not the full visitor IP address), coarse country/region/city supplied by Cloudflare, and generalized device, browser, and operating-system families. Global Privacy Control and browser Do Not Track signals disable this collection.</li>
+                    <li><strong>In-Site Notifications:</strong> The same pseudonymous browser identifier, limited engagement thresholds, last viewed workflow, and last-known cart state may be used to select a relevant message for the notification bell. We record whether a message was delivered, read, or dismissed; we do not need an email address for this feature. Global Privacy Control and browser Do Not Track signals disable the notification feed and its targeting.</li>
                     <li><strong>Optional Browser Push:</strong> If you explicitly press “Enable” and approve the browser permission prompt, we store a pseudonymous push-service endpoint and the public encryption material supplied by your browser so an eligible notification can reach that browser while the website is closed. We record aggregate delivery success or failure. No email is required. You can turn browser alerts off from the notification panel or revoke permission in browser settings; Global Privacy Control and Do Not Track disable enrollment.</li>
                     <li><strong>Infrastructure & Administrative Records:</strong> Cloudflare edge infrastructure handles standard network connection information necessary for security and routing. Administrative session and audit records include security identifiers, IP addresses, user-agent information, and actions performed in the administrative system for operator authentication and audit logging.</li>
                   </ul>
@@ -222,7 +233,7 @@ export default function LegalPage({ type = 'terms', navigate }) {
                 <section className="legal-section">
                   <h2>3. How We Use Information</h2>
                   <p>
-                    Information is used strictly for operational purposes: delivering purchased automations, verifying payment settlement, coordinating GeeLark Account Setup, responding to support inquiries, reviewing custom requests, measuring storefront and cart performance, presenting opted-in first-party in-site or browser updates and relevant cart offers, preventing abuse, and maintaining operational, accounting, payment, and legal record-keeping. We do not sell or rent personal information to third parties for marketing or advertising.
+                    Information is used strictly for operational purposes: delivering requested free previews and personal coupons, administering purchase-qualified referral rewards, sending optional marketing only where separately selected, delivering purchased automations, verifying payment settlement, coordinating GeeLark Account Setup, responding to support inquiries, reviewing custom requests, measuring storefront and cart performance, presenting opted-in first-party in-site or browser updates and relevant cart offers, preventing abuse, and maintaining operational, accounting, payment, and legal record-keeping. We do not sell or rent personal information to third parties for marketing or advertising.
                   </p>
                 </section>
 
@@ -239,7 +250,7 @@ export default function LegalPage({ type = 'terms', navigate }) {
                 <section className="legal-section">
                   <h2>5. Data Retention & Inquiries</h2>
                   <p>
-                    Storefront analytics events, last-known cart state, in-site notification delivery state, and browser-push delivery results are kept on a rolling 90-day basis. An active browser-push subscription remains available until you unsubscribe, the browser reports that it has expired, or it is otherwise removed; revoked subscription records are deleted after 90 days. Other information is retained for as long as reasonably necessary to provide the service, maintain operational and payment records, resolve disputes, prevent fraud, satisfy legitimate business requirements, and comply with applicable legal obligations. Where information is no longer needed, it may be deleted or de-identified. For privacy inquiries, contact <code>support@geelarkflows.com</code>.
+                    Storefront analytics events, limited engagement state, last-known cart state, in-site notification delivery state, and browser-push delivery results are kept on a rolling 90-day basis. An active browser-push subscription remains available until you unsubscribe, the browser reports that it has expired, or it is otherwise removed; revoked subscription records are deleted after 90 days. Voluntary preview leads and referral records are retained while reasonably needed to deliver the requested preview, operate one-use discounts, document consent or opt-out choices, prevent promotion abuse, and understand whether the program is useful. Other information is retained for as long as reasonably necessary to provide the service, maintain operational and payment records, resolve disputes, prevent fraud, satisfy legitimate business requirements, and comply with applicable legal obligations. Where information is no longer needed, it may be deleted or de-identified. For privacy inquiries, contact <code>support@geelarkflows.com</code>.
                   </p>
                 </section>
 

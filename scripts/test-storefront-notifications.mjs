@@ -146,6 +146,66 @@ const deactivate = await app.request(adminRequest(`/api/admin/notifications/${cr
 assert.equal(deactivate.status, 200);
 assert.equal((await deactivate.json()).active, false);
 
+const behaviorVisitorId = 'visitor_behavior_target_123456789';
+const behaviorSessionId = 'session_behavior_target_123456789';
+const createBehaviorCampaign = async (title, behaviorTrigger, productId = undefined) => {
+  const response = await app.request(adminRequest('/api/admin/notifications', rawAdminToken, 'POST', {
+    title,
+    message: `A relevant message for ${title.toLowerCase()}.`,
+    audience_type: 'all',
+    behavior_trigger: behaviorTrigger,
+    product_id: productId,
+    cta_label: 'Explore flows',
+    cta_url: '/',
+    active: true,
+  }), undefined, env);
+  assert.equal(response.status, 201);
+  return response.json();
+};
+
+await createBehaviorCampaign('Engaged visitor preview', 'engaged');
+await createBehaviorCampaign('Deep reader preview', 'deep_scroll');
+await createBehaviorCampaign('Instagram flow preview', 'product_view', 'instagram-account-creation');
+
+const freshBehaviorFeed = await app.request(publicRequest(`/api/notifications?visitor_id=${behaviorVisitorId}`), undefined, env);
+assert.equal((await freshBehaviorFeed.json()).notifications.length, 0, 'behavior messages must not show before their threshold');
+
+const recordEngagement = (body) => app.request(publicRequest('/api/analytics/engagement', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    visitor_id: behaviorVisitorId,
+    session_id: behaviorSessionId,
+    page_path: '/',
+    page_views: 1,
+    scroll_percent: 0,
+    engaged_seconds: 0,
+    ...body,
+  }),
+}), undefined, env);
+
+assert.equal((await recordEngagement({ engaged_seconds: 10 })).status, 202);
+const engagedFeed = await app.request(publicRequest(`/api/notifications?visitor_id=${behaviorVisitorId}`), undefined, env);
+assert.deepEqual((await engagedFeed.json()).notifications.map((item) => item.title), ['Engaged visitor preview']);
+
+assert.equal((await recordEngagement({ scroll_percent: 90 })).status, 202);
+const deepFeed = await app.request(publicRequest(`/api/notifications?visitor_id=${behaviorVisitorId}`), undefined, env);
+assert.equal((await deepFeed.json()).notifications.length, 2, '90% scroll must unlock engaged and deep-scroll campaigns');
+
+assert.equal((await recordEngagement({ page_path: '/flows/instagram-account-creation/', product_id: 'instagram-account-creation' })).status, 202);
+const productFeed = await app.request(publicRequest(`/api/notifications?visitor_id=${behaviorVisitorId}`), undefined, env);
+assert.equal((await productFeed.json()).notifications.length, 3, 'viewing a selected flow must unlock its product-view campaign');
+
+const invalidProductBehavior = await app.request(adminRequest('/api/admin/notifications', rawAdminToken, 'POST', {
+  title: 'Unknown product',
+  message: 'This product-view campaign should be rejected.',
+  audience_type: 'all',
+  behavior_trigger: 'product_view',
+  product_id: 'missing-product',
+  cta_url: '/',
+}), undefined, env);
+assert.equal(invalidProductBehavior.status, 400);
+
 const pushConfig = await app.request('https://geelarkflows.com/api/push/config', undefined, env);
 assert.equal(pushConfig.status, 200);
 assert.equal((await pushConfig.json()).public_key, env.VAPID_PUBLIC_KEY);
@@ -225,7 +285,14 @@ assert(serviceWorker.includes("self.addEventListener('notificationclick'"));
 assert(serviceWorker.includes('safeDestination'));
 const adminComponent = fs.readFileSync('src/admin/pages/AdminNotifications.jsx', 'utf8');
 assert(adminComponent.includes('Also send browser push now'));
+assert(adminComponent.includes("targeting_preset: 'engaged'"));
+assert(adminComponent.includes('Deep scrollers'));
+assert(adminComponent.includes('Viewed a selected flow'));
 const appSource = fs.readFileSync('src/App.jsx', 'utf8');
+assert(appSource.includes('startEngagementTracking'));
+const engagementOffer = fs.readFileSync('src/components/EngagementOffer.jsx', 'utf8');
+assert(engagementOffer.includes('Still comparing?'));
+assert(!engagementOffer.includes('role="dialog"'), 'engagement prompt should be a non-blocking banner, not an interstitial modal');
 assert(!appSource.includes('Do all flows include a video demo?'));
 assert(appSource.includes("What's visible before you pay."));
 assert(appSource.includes('How are checkout, payment, and delivery handled?'));

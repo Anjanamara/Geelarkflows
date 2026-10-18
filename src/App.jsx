@@ -7,10 +7,13 @@ import CustomRequestModal from './components/CustomRequestModal';
 import CartToast from './components/CartToast';
 import FloatingCart from './components/FloatingCart';
 import StorefrontNotifications from './components/StorefrontNotifications';
+import LeadMagnet from './components/LeadMagnet';
+import EngagementOffer from './components/EngagementOffer';
 import MrBeanFoldAnimation from './components/MrBeanFoldAnimation';
 import Footer from './components/Footer';
 import { products, specialties } from './data/products';
-import { trackPageView } from './analytics';
+import { startEngagementTracking, trackPageView } from './analytics';
+import { captureReferralCode } from './referrals';
 import './App.css';
 
 const AdminApp = lazy(() => import('./admin/AdminApp'));
@@ -19,6 +22,7 @@ const CheckoutPage = lazy(() => import('./pages/CheckoutPage'));
 const ContactPage = lazy(() => import('./pages/ContactPage'));
 const LegalPage = lazy(() => import('./pages/LegalPage'));
 const FlowDetailPage = lazy(() => import('./pages/FlowDetailPage'));
+const LeadUnsubscribePage = lazy(() => import('./pages/LeadUnsubscribePage'));
 const siteUrl = 'https://geelarkflows.com';
 
 const getFlowIdFromPath = (path) => {
@@ -249,6 +253,8 @@ function Storefront({ navigate }) {
           <span>Facebook</span><span>YouTube</span><span>Threads</span><span>Dating apps</span>
         </div>
 
+        <LeadMagnet variant="home" />
+
         <section className="catalog-section" id="catalog">
           <div className="section-heading">
             <div><span className="section-kicker">Automation catalog</span><h2>Find the flow that fits the job.</h2></div>
@@ -357,6 +363,7 @@ export default function App() {
       '/refund-policy': { title: 'Refund Policy | GeeLark Flows', description: 'Read the GeeLark Flows digital-product refund, duplicate-payment, delivery, and support policy.', index: true },
       '/cart': { title: 'Your Flow Cart | GeeLark Flows', description: 'Review selected reusable GeeLark automation flows before checkout.', index: false },
       '/checkout': { title: 'Secure Checkout | GeeLark Flows', description: 'Create and securely monitor a GeeLark Flows USDT invoice.', index: false },
+      '/unsubscribe': { title: 'Email Preferences | GeeLark Flows', description: 'Manage optional GeeLark Flows email offers.', index: false },
     };
     const flowId = getFlowIdFromPath(currentPath);
     const flowProduct = flowId ? products.find((product) => product.id === flowId) : null;
@@ -384,7 +391,9 @@ export default function App() {
   }, [currentPath]);
 
   useEffect(() => {
+    captureReferralCode();
     trackPageView(currentPath);
+    return startEngagementTracking(currentPath);
   }, [currentPath]);
 
   if (currentPath.startsWith('/admin')) {
@@ -396,10 +405,12 @@ export default function App() {
   return (
     <CartProvider>
       <FilterProvider>
+        <EngagementOffer pathname={currentPath} />
         <Suspense fallback={<div className="route-loading">Loading…</div>}>
           {flowId ? <FlowDetailPage productId={flowId} navigate={navigate} />
             : currentPath === '/cart' ? <CartPage navigate={navigate} />
               : currentPath === '/checkout' ? <CheckoutPage navigate={navigate} />
+                : currentPath === '/unsubscribe' ? <LeadUnsubscribePage navigate={navigate} />
                 : currentPath === '/contact' ? <ContactPage navigate={navigate} />
                   : currentPath === '/terms' ? <LegalPage type="terms" navigate={navigate} />
                     : currentPath === '/privacy' ? <LegalPage type="privacy" navigate={navigate} />

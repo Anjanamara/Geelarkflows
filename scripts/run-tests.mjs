@@ -13,6 +13,7 @@ const suites = [
   'scripts/test-storefront-typography.mjs',
   'scripts/test-storefront-analytics.mjs',
   'scripts/test-storefront-notifications.mjs',
+  'scripts/test-lead-magnet-referrals.mjs',
   'scripts/test-coupon-checkout-intent.mjs',
   'scripts/test-order-consistency.mjs',
   'scripts/test-schema.mjs',

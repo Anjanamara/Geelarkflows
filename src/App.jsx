@@ -13,6 +13,7 @@ import MrBeanFoldAnimation from './components/MrBeanFoldAnimation';
 import Footer from './components/Footer';
 import { products, specialties } from './data/products';
 import { startEngagementTracking, trackPageView } from './analytics';
+import { trackGooglePageView } from './googleAnalytics';
 import { captureReferralCode } from './referrals';
 import './App.css';
 
@@ -393,6 +394,7 @@ export default function App() {
   useEffect(() => {
     captureReferralCode();
     trackPageView(currentPath);
+    trackGooglePageView(currentPath);
     return startEngagementTracking(currentPath);
   }, [currentPath]);
 

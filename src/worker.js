@@ -6409,7 +6409,7 @@ mainApp.use('*', async (c, next) => {
   c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
   c.header(
     'Content-Security-Policy',
-    "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; upgrade-insecure-requests; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' https: blob:; connect-src 'self'",
+    "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; upgrade-insecure-requests; script-src 'self' https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://www.google-analytics.com https://www.googletagmanager.com; media-src 'self' https: blob:; connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com",
   );
   if (requestUrl.protocol === 'https:') {
     c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');

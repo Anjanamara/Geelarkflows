@@ -15,6 +15,7 @@ import { products, specialties } from './data/products';
 import { startEngagementTracking, trackPageView } from './analytics';
 import { trackGooglePageView } from './googleAnalytics';
 import { captureReferralCode } from './referrals';
+import { buildCatalogStructuredData } from './seo/structuredData';
 import './App.css';
 
 const AdminApp = lazy(() => import('./admin/AdminApp'));
@@ -135,48 +136,7 @@ function Storefront({ navigate }) {
 
   const openProduct = (product) => navigate(`/flows/${product.id}/`);
 
-  const structuredData = {
-    '@context': 'https://schema.org',
-    '@graph': [
-      {
-        '@type': 'WebSite',
-        name: 'GeeLark Flows',
-        url: `${siteUrl}/`,
-        description: 'Reusable GeeLark automation flows for social media, dating apps, mobile SEO, and account operations at scale.',
-      },
-      {
-        '@type': 'ItemList',
-        name: 'GeeLark Automation Flow Catalog',
-        numberOfItems: products.length,
-        itemListElement: products.map((product, index) => ({
-          '@type': 'ListItem',
-          position: index + 1,
-          item: {
-            '@type': 'Product',
-            name: product.title,
-            url: `${siteUrl}/flows/${product.id}/`,
-            description: product.details.description,
-            category: `${product.platform} automation flow`,
-            offers: {
-              '@type': 'Offer',
-              price: product.price,
-              priceCurrency: 'USD',
-              availability: 'https://schema.org/InStock',
-              url: `${siteUrl}/flows/${product.id}/`,
-            },
-          },
-        })),
-      },
-      {
-        '@type': 'FAQPage',
-        mainEntity: faqs.map((faq) => ({
-          '@type': 'Question',
-          name: faq.question,
-          acceptedAnswer: { '@type': 'Answer', text: faq.answer },
-        })),
-      },
-    ],
-  };
+  const structuredData = buildCatalogStructuredData({ products, faqs, siteUrl });
 
   return (
     <div className="site-shell">

@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { products, platforms } from '../src/data/products.js';
+import { buildMerchantProduct } from '../src/seo/structuredData.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const distDir = path.join(projectRoot, 'dist');
@@ -92,21 +93,7 @@ for (const product of products) {
   const structuredData = {
     '@context': 'https://schema.org',
     '@graph': [
-      {
-        '@type': 'Product',
-        name: product.title,
-        description: product.details.description,
-        category: `${platform?.label || product.platform} automation flow`,
-        url: canonicalUrl,
-        brand: { '@type': 'Brand', name: 'GeeLark Flows' },
-        offers: {
-          '@type': 'Offer',
-          url: canonicalUrl,
-          price: product.price,
-          priceCurrency: 'USD',
-          availability: 'https://schema.org/InStock',
-        },
-      },
+      buildMerchantProduct({ product, platform, siteUrl }),
       {
         '@type': 'BreadcrumbList',
         itemListElement: [

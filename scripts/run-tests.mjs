@@ -12,6 +12,7 @@ const suites = [
   'scripts/test-cart-checkout-flow.mjs',
   'scripts/test-storefront-typography.mjs',
   'scripts/test-google-analytics.mjs',
+  'scripts/test-seo-structured-data.mjs',
   'scripts/test-storefront-analytics.mjs',
   'scripts/test-storefront-notifications.mjs',
   'scripts/test-lead-magnet-referrals.mjs',

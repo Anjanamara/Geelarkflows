@@ -3,12 +3,10 @@ import { useCart } from '../context/CartContext';
 import { products, platforms } from '../data/products';
 import { PROVEN_FLOW_NOTE, OUTCOME_DISCLAIMER, getCompatibilityNote } from '../data/trustCopy';
 import FloatingCart from '../components/FloatingCart';
-import LeadMagnet from '../components/LeadMagnet';
-import StorefrontNotifications from '../components/StorefrontNotifications';
 import './FlowDetailPage.css';
 
 export default function FlowDetailPage({ productId, navigate }) {
-  const { cart, addToCart, addToCartWithAnimation, lastAddedId, openCheckout } = useCart();
+  const { cart, addToCart, lastAddedId, openCheckout } = useCart();
   const product = products.find((item) => item.id === productId);
 
   useEffect(() => {
@@ -39,14 +37,14 @@ export default function FlowDetailPage({ productId, navigate }) {
                 <small>Flows</small>
               </span>
             </a>
-            <a href="/" className="btn-back-to-marketplace" onClick={handleBackClick}>← Back to marketplace</a>
+            <a href="/" className="btn-back-to-marketplace" onClick={handleBackClick}>← All flows</a>
           </div>
         </header>
         <main className="flow-detail-main">
           <div className="flow-not-found">
             <h1>Flow not found</h1>
             <p>This automation flow may have been renamed or retired.</p>
-            <a href="/" className="btn-back-to-marketplace" onClick={handleBackClick}>← Back to marketplace</a>
+            <a href="/" className="btn-back-to-marketplace" onClick={handleBackClick}>← All flows</a>
           </div>
         </main>
       </div>
@@ -58,9 +56,9 @@ export default function FlowDetailPage({ productId, navigate }) {
   const isJustAdded = lastAddedId === product.id;
   const { details } = product;
 
-  const handleAddToCart = (event) => {
+  const handleAddToCart = () => {
     if (isInCart) return;
-    addToCartWithAnimation(product, event.currentTarget);
+    addToCart(product);
   };
 
   const handleDirectCheckout = () => {
@@ -82,9 +80,8 @@ export default function FlowDetailPage({ productId, navigate }) {
             </span>
           </a>
           <div className="flow-detail-header-actions">
-            <StorefrontNotifications />
             <FloatingCart />
-            <a href="/" className="btn-back-to-marketplace" onClick={handleBackClick}>← Back to marketplace</a>
+            <a href="/" className="btn-back-to-marketplace" onClick={handleBackClick}>← All flows</a>
           </div>
         </div>
       </header>
@@ -188,17 +185,15 @@ export default function FlowDetailPage({ productId, navigate }) {
               <span className="flow-buybox-sub">One purchase · Configured delivery · Unlimited runs</span>
 
               <button type="button" className="btn-primary flow-buybox-checkout" onClick={handleDirectCheckout}>
-                Direct checkout · ${product.price.toLocaleString('en-US')} →
+                Buy now · ${product.price.toLocaleString('en-US')}
               </button>
               <button
                 type="button"
                 className={`btn-secondary flow-buybox-add ${isInCart ? 'in-cart' : ''}`}
                 onClick={handleAddToCart}
               >
-                {isJustAdded ? 'Added ✓' : isInCart ? 'In cart ✓' : '+ Add to cart'}
+                {isJustAdded ? 'Added ✓' : isInCart ? 'In cart ✓' : 'Add to cart'}
               </button>
-
-              <LeadMagnet variant="compact" productId={product.id} />
 
               <div className="flow-buybox-trust">
                 <div className="flow-trust-item">
@@ -233,7 +228,7 @@ export default function FlowDetailPage({ productId, navigate }) {
           <span className="mobile-bar-val font-mono">${product.price.toLocaleString('en-US')}</span>
         </div>
         <button type="button" className="mobile-btn-checkout" onClick={handleDirectCheckout}>
-          Direct checkout →
+          Buy now
         </button>
       </div>
     </div>

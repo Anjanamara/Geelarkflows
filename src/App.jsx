@@ -1,15 +1,10 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { CartProvider, useCart } from './context/CartContext';
+import { CartProvider } from './context/CartContext';
 import { FilterProvider } from './context/FilterContext';
 import FilterHeader from './components/FilterHeader';
 import ProductGrid from './components/ProductGrid';
 import CustomRequestModal from './components/CustomRequestModal';
-import CartToast from './components/CartToast';
 import FloatingCart from './components/FloatingCart';
-import StorefrontNotifications from './components/StorefrontNotifications';
-import LeadMagnet from './components/LeadMagnet';
-import EngagementOffer from './components/EngagementOffer';
-import MrBeanFoldAnimation from './components/MrBeanFoldAnimation';
 import Footer from './components/Footer';
 import { products, specialties } from './data/products';
 import { startEngagementTracking, trackPageView } from './analytics';
@@ -87,24 +82,19 @@ function Brand({ href = '#top', onClick }) {
   return (
     <a className="brand-lockup" href={href} onClick={onClick} aria-label="GeeLark Flows home">
       <span className="brand-mark" aria-hidden="true">
-        <img src="/logo-mark.svg" alt="" width="42" height="42" />
+        <img src="/logo-mark.svg" alt="" width="36" height="36" />
       </span>
       <span className="brand-name">GeeLark <b>Flows</b></span>
     </a>
   );
 }
 
-function CartDeliveryAnimation() {
-  const { activeFoldAnimation, handleFoldArrival, handleFoldComplete } = useCart();
-
-  return (
-    <MrBeanFoldAnimation
-      activeFlow={activeFoldAnimation}
-      onArrival={handleFoldArrival}
-      onComplete={handleFoldComplete}
-    />
-  );
-}
+const heroFacts = [
+  'Fixed price, shown before checkout',
+  'Reusable: run it as often as you like',
+  '30-day compatibility fixes',
+  'Published refund, privacy and support policies',
+];
 
 function Storefront({ navigate }) {
   const [isCustomRequestModalOpen, setIsCustomRequestModalOpen] = useState(false);
@@ -135,6 +125,7 @@ function Storefront({ navigate }) {
   };
 
   const openProduct = (product) => navigate(`/flows/${product.id}/`);
+  const goTo = (path) => (event) => { event.preventDefault(); navigate(path); };
 
   const structuredData = buildCatalogStructuredData({ products, faqs, siteUrl });
 
@@ -144,16 +135,15 @@ function Storefront({ navigate }) {
         <div className="site-nav">
           <Brand />
           <nav className={`desktop-nav ${isMenuOpen ? 'is-open' : ''}`} aria-label="Primary navigation">
-            <button type="button" onClick={() => scrollToSection('catalog')}>Catalog</button>
-            <button type="button" onClick={() => scrollToSection('specialties')}>Capabilities</button>
+            <button type="button" onClick={() => scrollToSection('catalog')}>Flows</button>
             <button type="button" onClick={() => scrollToSection('process')}>How it works</button>
+            <button type="button" onClick={() => scrollToSection('trust')}>Policies</button>
             <button type="button" onClick={() => scrollToSection('faq')}>FAQ</button>
-            <a href="/contact" onClick={(event) => { event.preventDefault(); navigate('/contact'); }}>Support</a>
+            <a href="/contact" onClick={goTo('/contact')}>Support</a>
             <button className="mobile-custom-link" type="button" onClick={() => openRequest('flow')}>Request a custom flow</button>
           </nav>
           <div className="nav-actions">
             <button className="nav-custom-button" type="button" onClick={() => openRequest('flow')}>Custom build</button>
-            <StorefrontNotifications />
             <FloatingCart />
             <button
               className="menu-button"
@@ -168,122 +158,93 @@ function Storefront({ navigate }) {
         </div>
       </header>
 
-      <CartToast />
-      <CartDeliveryAnimation />
-
       <main id="top">
         <section className="hero-section" aria-labelledby="hero-title">
-          <div className="hero-copy">
-            <div className="eyebrow"><span>Reusable GeeLark flows</span><i>25 ready flows</i></div>
-            <h1 id="hero-title">Run the work.<br /><em>Skip the repetition.</em></h1>
-            <p className="hero-lede">
-              Mobile automation for publishing, warmup, account operations, dating apps,
-              and mobile SEO—configured once and ready to run again.
-            </p>
-            <div className="hero-actions">
-              <button type="button" className="primary-cta" onClick={() => scrollToSection('catalog')}>
-                Browse flows <span aria-hidden="true">↘</span>
-              </button>
-              <button type="button" className="secondary-cta" onClick={() => openRequest('flow')}>
-                Scope a custom build <span aria-hidden="true">→</span>
-              </button>
-            </div>
-            <ul className="hero-proof" aria-label="Purchase benefits">
-              <li><b>One purchase</b><span>Clear fixed scope</span></li>
-              <li><b>Unlimited runs</b><span>No per-run charge</span></li>
-              <li><b>Configured delivery</b><span>Built for your setup</span></li>
-            </ul>
+          <p className="eyebrow">Independent marketplace · {products.length} ready-made flows</p>
+          <h1 id="hero-title">Ready-made automation for your GeeLark cloud phones.</h1>
+          <p className="hero-lede">
+            Buy a flow once and run it as often as you need. Account creation, warmup,
+            posting and more for Instagram, TikTok, Snapchat, Reddit, Facebook, YouTube,
+            Threads and dating apps.
+          </p>
+          <div className="hero-actions">
+            <button type="button" className="primary-cta" onClick={() => scrollToSection('catalog')}>
+              Browse the flows
+            </button>
+            <button type="button" className="secondary-cta" onClick={() => openRequest('flow')}>
+              Request a custom flow
+            </button>
           </div>
-
-          <div className="hero-workspace" aria-label="Example automation run">
-            <div className="workspace-head">
-              <div><span className="workspace-status"><i /> Ready to run</span><strong>Publishing operation</strong></div>
-              <span className="workspace-menu" aria-hidden="true">•••</span>
-            </div>
-            <div className="workspace-flow">
-              <div className="flow-stage is-complete"><span>01</span><p><b>Connect accounts</b><small>Inputs validated</small></p><i>✓</i></div>
-              <div className="flow-stage is-complete"><span>02</span><p><b>Load content</b><small>Schedule prepared</small></p><i>✓</i></div>
-              <div className="flow-stage is-active"><span>03</span><p><b>Run workflow</b><small>Reusable operation</small></p><i>→</i></div>
-            </div>
-            <div className="workspace-footer"><span>Supports multi-account execution</span><b>Unlimited runs</b></div>
-          </div>
+          <ul className="hero-facts" aria-label="What you can rely on">
+            {heroFacts.map((fact) => (
+              <li key={fact}>
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
+                {fact}
+              </li>
+            ))}
+          </ul>
         </section>
-
-        <div className="platform-strip" aria-label="Supported platforms">
-          <span>Instagram</span><span>TikTok</span><span>Snapchat</span><span>Reddit</span>
-          <span>Facebook</span><span>YouTube</span><span>Threads</span><span>Dating apps</span>
-        </div>
-
-        <LeadMagnet variant="home" />
 
         <section className="catalog-section" id="catalog">
           <div className="section-heading">
-            <div><span className="section-kicker">Automation catalog</span><h2>Find the flow that fits the job.</h2></div>
-            <p>Compare exactly what each workflow handles, the fixed purchase price, and the platform it supports—without opening every product.</p>
+            <h2>All flows</h2>
+            <p>Every flow has one fixed price and a plain description of what it does. Open one to see exactly what is included.</p>
           </div>
           <FilterHeader />
           <ProductGrid onViewDetails={openProduct} />
         </section>
 
-        <section className="specialties-section" id="specialties">
-          <div className="section-heading light-heading">
-            <div><span className="section-kicker">Custom capabilities</span><h2>When the catalog is only the starting point.</h2></div>
-            <p>Connect content, account operations, analytics, and device-level actions into one scoped system.</p>
+        <section className="custom-section" id="custom" aria-labelledby="custom-title">
+          <div>
+            <h2 id="custom-title">Need something that isn’t listed?</h2>
+            <p>
+              Tell us the outcome you want and we’ll scope a custom workflow. Examples:{' '}
+              {specialties.map((specialty) => specialty.title.toLowerCase().replace('seo', 'SEO')).join(', ')}.
+            </p>
           </div>
-          <div className="specialty-grid">
-            {specialties.map((specialty, index) => (
-              <article className="specialty-card" key={specialty.title}>
-                <div className="specialty-card-top"><span>{specialty.marker}</span><i>{String(index + 1).padStart(2, '0')}</i></div>
-                <h3>{specialty.title}</h3><p>{specialty.description}</p>
-              </article>
-            ))}
-          </div>
-          <div className="custom-development-banner">
-            <div><span>Need something specific?</span><h3>Bring us the outcome. We’ll map the workflow.</h3></div>
-            <p>Custom development can cover one focused action or a connected, multi-account operation.</p>
-            <button type="button" onClick={() => openRequest('flow')}>Start a custom request <span>→</span></button>
-          </div>
+          <button type="button" className="secondary-cta" onClick={() => openRequest('flow')}>Request a custom flow</button>
         </section>
 
         <section className="process-section" id="process">
           <div className="section-heading">
-            <div><span className="section-kicker">How delivery works</span><h2>From requirement to repeatable run.</h2></div>
-            <p>Every purchase has a defined scope. You know what the flow handles before checkout and what happens after payment.</p>
+            <h2>How buying works</h2>
           </div>
-          <div className="process-grid">
+          <ol className="process-grid">
             {operationSteps.map(([number, title, copy]) => (
-              <article key={number}><span>{number}</span><h3>{title}</h3><p>{copy}</p></article>
+              <li key={number}><span>{number}</span><h3>{title}</h3><p>{copy}</p></li>
             ))}
-          </div>
+          </ol>
         </section>
 
         <section className="trust-section" id="trust" aria-labelledby="trust-title">
-          <div className="section-heading trust-heading">
-            <div><span className="section-kicker">Before you buy</span><h2 id="trust-title">What's visible before you pay.</h2></div>
-            <p>Scope, price, payment status, and policy terms are documented before checkout, not after.</p>
+          <div className="section-heading">
+            <h2 id="trust-title">What's visible before you pay.</h2>
+            <p>Scope, price, payment status and policy terms are documented before checkout, not after.</p>
           </div>
-          <div className="trust-grid">
+          <ul className="trust-grid">
             {trustSignals.map(([number, title, copy]) => (
-              <article key={number}><span>{number}</span><div><h3>{title}</h3><p>{copy}</p></div></article>
+              <li key={number}><h3>{title}</h3><p>{copy}</p></li>
             ))}
-          </div>
+          </ul>
           <nav className="trust-policy-links" aria-label="Purchase policies and support">
-            <a href="/refund-policy" onClick={(event) => { event.preventDefault(); navigate('/refund-policy'); }}>Refund policy <span aria-hidden="true">↗</span></a>
-            <a href="/privacy" onClick={(event) => { event.preventDefault(); navigate('/privacy'); }}>Privacy policy <span aria-hidden="true">↗</span></a>
-            <a href="/terms" onClick={(event) => { event.preventDefault(); navigate('/terms'); }}>Terms of service <span aria-hidden="true">↗</span></a>
-            <a href="/contact" onClick={(event) => { event.preventDefault(); navigate('/contact'); }}>Contact support <span aria-hidden="true">↗</span></a>
+            <a href="/refund-policy" onClick={goTo('/refund-policy')}>Refund policy</a>
+            <a href="/privacy" onClick={goTo('/privacy')}>Privacy policy</a>
+            <a href="/terms" onClick={goTo('/terms')}>Terms of service</a>
+            <a href="/contact" onClick={goTo('/contact')}>Contact support</a>
           </nav>
+          <p className="trust-independence">
+            GeeLark Flows is an independent business. It is not affiliated with, endorsed by, or sponsored by the owner of the GeeLark software or trademark.
+          </p>
         </section>
 
         <section className="faq-section" id="faq">
-          <div className="section-heading faq-heading">
-            <div><span className="section-kicker">Before you buy</span><h2>Clear answers. No fine-print surprises.</h2></div>
-            <p>Scope, reuse, checkout, account scale, and custom development—explained plainly.</p>
+          <div className="section-heading">
+            <h2>Common questions</h2>
           </div>
           <div className="faq-list">
             {faqs.map((faq, index) => (
               <details key={faq.question} open={index === 0}>
-                <summary><span>{String(index + 1).padStart(2, '0')}</span><h3>{faq.question}</h3><i aria-hidden="true">+</i></summary>
+                <summary><h3>{faq.question}</h3><i aria-hidden="true" /></summary>
                 <p>{faq.answer}</p>
               </details>
             ))}
@@ -367,7 +328,6 @@ export default function App() {
   return (
     <CartProvider>
       <FilterProvider>
-        <EngagementOffer pathname={currentPath} />
         <Suspense fallback={<div className="route-loading">Loading…</div>}>
           {flowId ? <FlowDetailPage productId={flowId} navigate={navigate} />
             : currentPath === '/cart' ? <CartPage navigate={navigate} />

@@ -64,13 +64,8 @@ export default function Footer({ navigate, onOpenCustomRequest }) {
                 </button>
               </li>
               <li>
-                <button type="button" onClick={() => handleScrollToSection('specialties')}>
-                  Specialties & RPA
-                </button>
-              </li>
-              <li>
                 <button type="button" onClick={handleCustomRequest}>
-                  Custom Development ↗
+                  Request a custom flow
                 </button>
               </li>
             </ul>
@@ -82,7 +77,7 @@ export default function Footer({ navigate, onOpenCustomRequest }) {
             <ul className="footer-links-list">
               <li>
                 <button type="button" onClick={() => handleScrollToSection('faq')}>
-                  Questions & FAQ
+                  Questions (FAQ)
                 </button>
               </li>
               <li>
@@ -128,7 +123,7 @@ export default function Footer({ navigate, onOpenCustomRequest }) {
             <br />Independent service; not affiliated with or endorsed by the owner of the GeeLark software or trademark.
           </p>
           <div className="footer-bottom-meta">
-            <span className="crypto-badge"><i /> Secure USDT checkout via NOWPayments</span>
+            <span className="crypto-badge"><i /> Payments handled by NOWPayments (USDT)</span>
           </div>
         </div>
       </div>

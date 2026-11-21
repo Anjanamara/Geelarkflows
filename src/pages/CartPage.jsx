@@ -2,8 +2,6 @@ import React, { useMemo, useState } from 'react';
 import { useCart } from '../context/CartContext';
 import { products } from '../data/products';
 import CheckoutProgress from '../components/CheckoutProgress';
-import LeadMagnet from '../components/LeadMagnet';
-import StorefrontNotifications from '../components/StorefrontNotifications';
 import './CartPage.css';
 
 export default function CartPage({ navigate }) {
@@ -73,7 +71,6 @@ export default function CartPage({ navigate }) {
           </a>
 
           <div className="cart-header-actions">
-            <StorefrontNotifications />
             <button
               type="button"
               className="btn-continue-shopping"
@@ -247,8 +244,6 @@ export default function CartPage({ navigate }) {
                   >
                     Proceed to Checkout →
                   </button>
-
-                  <LeadMagnet variant="cart" />
 
                   {/* Fulfillment Reassurance & Trust */}
                   <div className="cart-trust-reassurance">

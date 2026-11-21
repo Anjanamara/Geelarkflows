@@ -20,10 +20,6 @@ const readSavedCart = () => {
 export function CartProvider({ children }) {
   const [cart, setCart] = useState(readSavedCart);
   const [lastAddedId, setLastAddedId] = useState(null);
-  const [isCartPulsing, setIsCartPulsing] = useState(false);
-  const [toast, setToast] = useState(null);
-  const [activeFoldAnimation, setActiveFoldAnimation] = useState(null);
-  const pulseTimerRef = useRef(null);
   const addedTimerRef = useRef(null);
   const cartRef = useRef(cart);
 
@@ -38,17 +34,7 @@ export function CartProvider({ children }) {
   }, [cart]);
 
   useEffect(() => () => {
-    clearTimeout(pulseTimerRef.current);
     clearTimeout(addedTimerRef.current);
-  }, []);
-
-  const showToast = useCallback((toastData) => setToast(toastData), []);
-  const hideToast = useCallback(() => setToast(null), []);
-
-  const triggerCartPulse = useCallback(() => {
-    setIsCartPulsing(true);
-    clearTimeout(pulseTimerRef.current);
-    pulseTimerRef.current = setTimeout(() => setIsCartPulsing(false), 360);
   }, []);
 
   const addToCart = useCallback((product) => {
@@ -60,60 +46,11 @@ export function CartProvider({ children }) {
     setLastAddedId(product.id);
     clearTimeout(addedTimerRef.current);
     addedTimerRef.current = setTimeout(() => setLastAddedId(null), 1800);
-    triggerCartPulse();
-  }, [triggerCartPulse]);
-
-  const addToCartWithAnimation = useCallback((product, sourceElement) => {
-    if (cart.some((item) => item.id === product.id) || activeFoldAnimation) return;
-
-    // The cart is updated immediately so the badge, storage, and checkout
-    // data are correct right away; the fold animation below is decorative
-    // and must never gate real cart state.
-    addToCart(product);
-
-    const targetElement = document.querySelector('#floating-cart-btn');
-    const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-
-    if (!sourceElement || !targetElement || prefersReducedMotion) {
-      showToast({
-        type: 'add',
-        product: { title: product.title, price: product.price },
-        id: Date.now(),
-      });
-      return;
-    }
-
-    const sourceCard = sourceElement.closest('.flow-card,.modal-content') || sourceElement;
-    setActiveFoldAnimation({
-      id: `${product.id}-${Date.now()}`,
-      product,
-      sourceRect: sourceCard.getBoundingClientRect(),
-      targetRect: targetElement.getBoundingClientRect(),
-    });
-  }, [activeFoldAnimation, addToCart, cart, showToast]);
-
-  const handleFoldArrival = useCallback(() => {
-    if (!activeFoldAnimation) return;
-    const { product } = activeFoldAnimation;
-    showToast({
-      type: 'add',
-      product: { title: product.title, price: product.price },
-      id: Date.now(),
-    });
-  }, [activeFoldAnimation, showToast]);
-
-  const handleFoldComplete = useCallback(() => {
-    setActiveFoldAnimation(null);
   }, []);
 
   const removeFromCart = useCallback((id) => {
-    setCart((current) => {
-      const item = current.find((entry) => entry.id === id);
-      if (item) showToast({ type: 'remove', product: { title: item.title }, id: Date.now() });
-      return current.filter((entry) => entry.id !== id);
-    });
-    triggerCartPulse();
-  }, [showToast, triggerCartPulse]);
+    setCart((current) => current.filter((entry) => entry.id !== id));
+  }, []);
 
   const clearCart = useCallback(() => setCart([]), []);
 
@@ -134,15 +71,7 @@ export function CartProvider({ children }) {
   const value = useMemo(() => ({
     cart,
     lastAddedId,
-    isCartPulsing,
-    toast,
-    activeFoldAnimation,
-    showToast,
-    hideToast,
     addToCart,
-    addToCartWithAnimation,
-    handleFoldArrival,
-    handleFoldComplete,
     removeFromCart,
     clearCart,
     openCart,
@@ -153,15 +82,7 @@ export function CartProvider({ children }) {
   }), [
     cart,
     lastAddedId,
-    isCartPulsing,
-    toast,
-    activeFoldAnimation,
-    showToast,
-    hideToast,
     addToCart,
-    addToCartWithAnimation,
-    handleFoldArrival,
-    handleFoldComplete,
     removeFromCart,
     clearCart,
     openCart,

@@ -1,10 +1,10 @@
 .contact-page-shell { min-height: 100vh; background: var(--bg-primary); }
-.contact-page-header, .legal-page-header { min-height: var(--header-height); border-bottom: 1px solid var(--border-light); background: rgba(7,11,18,0.82); backdrop-filter: blur(18px); }
+.contact-page-header, .legal-page-header { min-height: var(--header-height); border-bottom: 1px solid var(--border-light); background: var(--header-bg); backdrop-filter: blur(18px); }
 .contact-header-inner, .legal-header-inner { width: min(var(--site-width), calc(100% - (var(--page-gutter) * 2))); min-height: var(--header-height); margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .contact-brand-lockup, .legal-brand-lockup { display: inline-flex; align-items: center; gap: 10px; }
-.contact-brand-lockup .brand-text, .legal-brand-lockup .brand-text { display: flex; flex-direction: column; line-height: 1; }
-.contact-brand-lockup .brand-text strong, .legal-brand-lockup .brand-text strong { font-size: var(--type-small); }
-.contact-brand-lockup .brand-text small, .legal-brand-lockup .brand-text small { margin-top: 3px; color: var(--text-muted); font-size: var(--type-caption); }
+.contact-brand-lockup .brand-text, .legal-brand-lockup .brand-text { display: flex; flex-direction: row; align-items: baseline; gap: 5px; line-height: 1; }
+.contact-brand-lockup .brand-text strong, .legal-brand-lockup .brand-text strong { font-size: var(--type-body-lg); font-weight: 700; }
+.contact-brand-lockup .brand-text small, .legal-brand-lockup .brand-text small { margin: 0; color: var(--text-secondary); font-size: var(--type-body-lg); font-weight: 500; }
 .btn-back-home { min-height: 42px; padding: 0 13px; display: inline-flex; align-items: center; border: 1px solid var(--border-medium); border-radius: 9px; background: var(--bg-card); color: var(--text-secondary); font-size: var(--type-caption); font-weight: 700; }
 .contact-page-main { padding: clamp(54px, 8vw, 105px) 0 clamp(80px, 10vw, 130px); }
 .contact-container { width: min(1050px, calc(100% - (var(--page-gutter) * 2))); margin: 0 auto; }
@@ -12,8 +12,8 @@
 .contact-kicker { color: var(--accent-lime-dark); font-size: var(--type-caption); font-weight: 800; letter-spacing: 0.09em; text-transform: uppercase; }
 .contact-title { margin-top: 16px; font-size: clamp(2.7rem, 7vw, 5.8rem); font-weight: 650; line-height: 0.98; letter-spacing: -0.07em; }
 .contact-lede { max-width: 660px; margin-top: 22px; color: var(--text-secondary); font-size: var(--type-small); line-height: 1.75; }
-.contact-primary-channel { margin-top: 46px; padding: 26px; display: flex; align-items: center; gap: 18px; border: 1px solid var(--border-medium); border-radius: 17px; background: linear-gradient(120deg,rgba(139,124,255,.15),rgba(69,216,232,.06)); }
-.channel-icon-wrap { width: 46px; height: 46px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 12px; background: linear-gradient(135deg,#7565ef,#927fff); color: white; }
+.contact-primary-channel { margin-top: 46px; padding: 26px; display: flex; align-items: center; gap: 18px; border: 1px solid var(--border-medium); border-radius: 17px; background: var(--accent-lime-soft); }
+.channel-icon-wrap { width: 46px; height: 46px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 12px; background: var(--accent-button); color: white; }
 .channel-info { min-width: 0; display: flex; flex-direction: column; }
 .channel-label { color: var(--text-muted); font-size: var(--type-caption); font-weight: 750; text-transform: uppercase; }
 .channel-email { margin-top: 4px; color: var(--text-primary); font-size: clamp(0.7rem, 2vw, 0.9rem); font-weight: 700; word-break: break-word; }
@@ -33,4 +33,4 @@
 .contact-footer-note { margin-top: 22px; color: var(--text-muted); font-size: var(--type-caption); line-height: 1.6; text-align: center; }
 @media (max-width: 800px) { .topic-card { min-height: 270px; } }
 @media (max-width: 520px) { .contact-primary-channel { padding: 20px; align-items: flex-start; } .channel-icon-wrap { width: 40px; height: 40px; } }
-@media (max-width: 390px) { .contact-brand-lockup .brand-text small { display: none; } .btn-back-home { padding-inline: 9px; } }
+@media (max-width: 390px) { .btn-back-home { padding-inline: 9px; } }

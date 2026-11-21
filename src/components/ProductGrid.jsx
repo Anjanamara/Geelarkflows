@@ -8,13 +8,10 @@ export default function ProductGrid({ onViewDetails }) {
   if (filteredProducts.length === 0) {
     return (
       <div className="empty-grid-container">
-        <span className="empty-code">NO_MATCH / 00</span>
-        <h3 className="empty-title">No flows match those filters.</h3>
-        <p className="empty-description">
-          Try another platform, remove the price range, or search for a different operation.
-        </p>
-        <button className="reset-filters-btn" onClick={clearFilters}>
-          Reset all filters
+        <h3 className="empty-title">No flows match that search.</h3>
+        <p className="empty-description">Try another platform or a different word. Or ask us to build it.</p>
+        <button type="button" className="reset-filters-btn" onClick={clearFilters}>
+          Clear search
         </button>
       </div>
     );

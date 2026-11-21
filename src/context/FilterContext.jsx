@@ -10,6 +10,7 @@ export function FilterProvider({ children }) {
   const [instockOnly, setInstockOnly] = useState(false);
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
+  const [sortBy, setSortBy] = useState('featured');
 
   const togglePlatform = (platformId) => {
     setSelectedPlatforms((prev) =>
@@ -26,10 +27,11 @@ export function FilterProvider({ children }) {
     setInstockOnly(false);
     setMinPrice('');
     setMaxPrice('');
+    setSortBy('featured');
   };
 
   const filteredProducts = useMemo(() => {
-    return products.filter((product) => {
+    const matches = products.filter((product) => {
       // 1. Instock Filter
       if (instockOnly && product.stock <= 0) {
         return false;
@@ -95,7 +97,10 @@ export function FilterProvider({ children }) {
 
       return true;
     });
-  }, [selectedCategory, selectedPlatforms, searchQuery, instockOnly, minPrice, maxPrice]);
+    if (sortBy === 'price-asc') return [...matches].sort((a, b) => a.price - b.price);
+    if (sortBy === 'price-desc') return [...matches].sort((a, b) => b.price - a.price);
+    return matches;
+  }, [selectedCategory, selectedPlatforms, searchQuery, instockOnly, minPrice, maxPrice, sortBy]);
 
   const value = useMemo(
     () => ({
@@ -112,10 +117,12 @@ export function FilterProvider({ children }) {
       setMinPrice,
       maxPrice,
       setMaxPrice,
+      sortBy,
+      setSortBy,
       filteredProducts,
       clearFilters,
     }),
-    [searchQuery, selectedPlatforms, selectedCategory, instockOnly, minPrice, maxPrice, filteredProducts]
+    [searchQuery, selectedPlatforms, selectedCategory, instockOnly, minPrice, maxPrice, sortBy, filteredProducts]
   );
 
   return <FilterContext.Provider value={value}>{children}</FilterContext.Provider>;

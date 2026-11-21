@@ -1,10 +1,10 @@
 .flow-detail-shell { min-height: 100vh; background: var(--bg-primary); }
-.flow-detail-header { min-height: var(--header-height); border-bottom: 1px solid var(--border-light); background: rgba(7,11,18,0.82); backdrop-filter: blur(18px); }
+.flow-detail-header { min-height: var(--header-height); border-bottom: 1px solid var(--border-light); background: var(--header-bg); backdrop-filter: blur(18px); }
 .flow-detail-header-inner { width: min(var(--site-width), calc(100% - (var(--page-gutter) * 2))); min-height: var(--header-height); margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .flow-detail-brand-lockup { display: inline-flex; align-items: center; gap: 10px; }
-.flow-detail-brand-lockup .brand-text { display: flex; flex-direction: column; line-height: 1; }
-.flow-detail-brand-lockup .brand-text strong { font-size: var(--type-small); }
-.flow-detail-brand-lockup .brand-text small { margin-top: 3px; color: var(--text-muted); font-size: var(--type-caption); }
+.flow-detail-brand-lockup .brand-text { display: flex; flex-direction: row; align-items: baseline; gap: 5px; line-height: 1; }
+.flow-detail-brand-lockup .brand-text strong { font-size: var(--type-body-lg); font-weight: 700; }
+.flow-detail-brand-lockup .brand-text small { margin: 0; color: var(--text-secondary); font-size: var(--type-body-lg); font-weight: 500; }
 .btn-back-to-marketplace { min-height: 42px; padding: 0 13px; display: inline-flex; align-items: center; border: 1px solid var(--border-medium); border-radius: 9px; background: var(--bg-card); color: var(--text-secondary); font-size: var(--type-caption); font-weight: 700; }
 .flow-detail-header-actions { display: flex; align-items: center; gap: 10px; }
 
@@ -16,7 +16,7 @@
 .flow-not-found p { color: var(--text-secondary); margin-bottom: 20px; }
 
 .flow-platform-line { display: flex; align-items: center; gap: 11px; }
-.flow-platform-token { width: 40px; height: 40px; display: grid; place-items: center; border: 1px solid color-mix(in srgb,var(--modal-accent) 34%,transparent); border-radius: 10px; background: color-mix(in srgb,var(--modal-accent) 12%,transparent); color: color-mix(in srgb,var(--modal-accent) 84%,white); font-family: var(--font-mono); font-size: var(--type-caption); font-weight: 700; }
+.flow-platform-token { width: 40px; height: 40px; display: grid; place-items: center; border: 1px solid var(--border-medium); border-radius: 10px; background: var(--accent-lime-soft); color: var(--accent-lime-dark); font-family: var(--font-mono); font-size: var(--type-caption); font-weight: 700; }
 .flow-platform-line > div { display: flex; flex-direction: column; gap: 2px; }
 .flow-platform-line > div > span { font-size: var(--type-small); font-weight: 750; }
 .flow-platform-line small { color: var(--text-muted); font-size: var(--type-caption); }
@@ -33,32 +33,32 @@
 .flow-video-section video { width: 100%; max-height: 460px; display: block; border-radius: 14px; background: #04070c; }
 
 .flow-feature-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; list-style: none; }
-.flow-feature-grid li { min-height: 54px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; border: 1px solid var(--border-light); border-radius: 11px; background: rgba(255,255,255,.025); color: var(--text-secondary); font-size: var(--type-small); line-height: var(--leading-snug); }
+.flow-feature-grid li { min-height: 54px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; border: 1px solid var(--border-light); border-radius: 11px; background: var(--tint); color: var(--text-secondary); font-size: var(--type-small); line-height: var(--leading-snug); }
 .flow-feature-grid li span { color: var(--text-muted); font-family: var(--font-mono); font-size: var(--type-caption); }
 
 .flow-supported-apps { display: flex; flex-wrap: wrap; gap: 7px; }
-.flow-supported-apps span { padding: 7px 11px; border: 1px solid var(--border-light); border-radius: 8px; background: rgba(255,255,255,.025); color: var(--text-secondary); font-size: var(--type-label); font-weight: 700; }
+.flow-supported-apps span { padding: 7px 11px; border: 1px solid var(--border-light); border-radius: 8px; background: var(--tint); color: var(--text-secondary); font-size: var(--type-label); font-weight: 700; }
 .flow-platform-setup-copy { margin-top: 11px; color: var(--text-muted); font-size: var(--type-small); line-height: var(--leading-reading); }
 
 .flow-steps-list { display: flex; flex-direction: column; gap: 9px; list-style: none; }
-.flow-steps-list li { padding: 13px 16px; display: flex; align-items: flex-start; gap: 14px; border: 1px solid var(--border-light); border-radius: 11px; background: rgba(255,255,255,.025); }
+.flow-steps-list li { padding: 13px 16px; display: flex; align-items: flex-start; gap: 14px; border: 1px solid var(--border-light); border-radius: 11px; background: var(--tint); }
 .flow-steps-list li span { flex-shrink: 0; margin-top: 1px; color: var(--text-muted); font-family: var(--font-mono); font-size: var(--type-caption); }
 .flow-steps-list li p { color: var(--text-secondary); font-size: var(--type-small); line-height: var(--leading-reading); }
 
 .flow-requirements-list { display: flex; flex-direction: column; gap: 8px; list-style: none; }
-.flow-requirements-list li { padding: 12px 16px 12px 34px; position: relative; border: 1px solid var(--border-light); border-radius: 10px; background: rgba(255,255,255,.02); color: var(--text-secondary); font-size: var(--type-small); line-height: var(--leading-reading); }
+.flow-requirements-list li { padding: 12px 16px 12px 34px; position: relative; border: 1px solid var(--border-light); border-radius: 10px; background: var(--tint); color: var(--text-secondary); font-size: var(--type-small); line-height: var(--leading-reading); }
 .flow-requirements-list li::before { content: '—'; position: absolute; left: 14px; color: var(--text-muted); }
 
 .flow-purchase-steps { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 9px; }
-.flow-purchase-steps > div { padding: 16px; border: 1px solid var(--border-light); border-radius: 10px; background: rgba(255,255,255,.02); }
+.flow-purchase-steps > div { padding: 16px; border: 1px solid var(--border-light); border-radius: 10px; background: var(--tint); }
 .flow-purchase-steps span { color: var(--accent-lime-dark); font-family: var(--font-mono); font-size: var(--type-caption); }
 .flow-purchase-steps p { margin-top: 18px; color: var(--text-secondary); font-size: var(--type-small); line-height: var(--leading-reading); }
 
-.flow-delivery-note { padding: 18px; border: 1px solid rgba(139,124,255,.18); border-radius: 12px; background: rgba(139,124,255,.08); }
+.flow-delivery-note { padding: 18px; border: 1px solid rgba(15,107,92,.18); border-radius: 12px; background: rgba(15,107,92,.08); }
 .flow-delivery-note > span { color: var(--accent-lime-dark); font-size: var(--type-caption); font-weight: 800; letter-spacing: .07em; }
 .flow-delivery-note p { margin-top: 8px; color: var(--text-secondary); font-size: var(--type-small); line-height: var(--leading-reading); }
 
-.flow-compatibility-note { margin-top: 26px; padding: 18px; border: 1px solid rgba(127,217,164,.22); border-radius: 12px; background: rgba(127,217,164,.06); }
+.flow-compatibility-note { margin-top: 26px; padding: 18px; border: 1px solid rgba(26,127,75,.22); border-radius: 12px; background: rgba(26,127,75,.06); }
 .flow-compatibility-note > span { color: var(--accent-success); font-size: var(--type-caption); font-weight: 800; letter-spacing: .07em; }
 .flow-compatibility-note > p { margin-top: 8px; color: var(--text-secondary); font-size: var(--type-small); line-height: var(--leading-reading); }
 .flow-outcome-disclaimer { margin-top: 10px !important; padding-top: 10px; border-top: 1px solid var(--border-light); color: var(--text-muted) !important; font-size: var(--type-caption) !important; }
@@ -69,7 +69,7 @@
 .flow-buybox-sub { display: block; margin-top: 4px; color: var(--text-muted); font-size: var(--type-caption); }
 .flow-buybox-checkout { width: 100%; min-height: 50px; margin-top: 18px; font-size: var(--type-small); font-weight: 750; }
 .flow-buybox-add { width: 100%; min-height: 44px; margin-top: 9px; font-size: var(--type-caption); font-weight: 750; }
-.flow-buybox-add.in-cart { border-color: rgba(95,224,160,.35); color: var(--accent-success); }
+.flow-buybox-add.in-cart { border-color: rgba(26,127,75,.35); color: var(--accent-success); }
 .flow-buybox-trust { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-light); display: grid; gap: 10px; }
 .flow-trust-item { display: flex; align-items: flex-start; gap: 8px; color: var(--text-secondary); font-size: var(--type-caption); line-height: 1.45; }
 .flow-trust-item svg { flex: 0 0 auto; color: var(--accent-lime-dark); }
@@ -92,7 +92,7 @@
   .flow-purchase-steps { grid-template-columns: 1fr; }
   .flow-purchase-steps > div { padding: 14px; }
   .flow-purchase-steps p { margin-top: 12px; }
-  .flow-detail-mobile-bar { position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 70; padding: 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; background: #171a17; color: var(--text-primary); box-shadow: 0 15px 45px rgba(0,0,0,0.28); }
+  .flow-detail-mobile-bar { position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 70; padding: 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--border-medium); border-radius: 12px; background: var(--bg-card); color: var(--text-primary); box-shadow: 0 8px 28px rgba(20,24,31,0.14); }
   .flow-detail-mobile-bar .mobile-bar-info { display: flex; flex-direction: column; gap: 2px; }
   .flow-detail-mobile-bar .mobile-bar-label { color: var(--text-muted); font-size: var(--type-caption); }
   .flow-detail-mobile-bar .mobile-bar-val { font-size: var(--type-small); font-weight: 700; }
@@ -100,8 +100,7 @@
 }
 
 @media (max-width: 390px) {
-  .flow-detail-brand-lockup .brand-text small { display: none; }
-  .flow-detail-header-actions { gap: 6px; }
+    .flow-detail-header-actions { gap: 6px; }
   .btn-back-to-marketplace { width: 42px; padding: 0; justify-content: center; font-size: 0; }
   .btn-back-to-marketplace::after { content: '←'; font-size: var(--type-small); }
 }

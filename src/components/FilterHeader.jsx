@@ -10,68 +10,46 @@ export default function FilterHeader() {
     setSelectedPlatforms,
     togglePlatform,
     filteredProducts,
-    minPrice,
-    setMinPrice,
-    maxPrice,
-    setMaxPrice,
+    sortBy,
+    setSortBy,
     clearFilters,
   } = useFilter();
 
-  const hasFilters = searchQuery || selectedPlatforms.length || minPrice || maxPrice;
+  const hasFilters = searchQuery || selectedPlatforms.length || sortBy !== 'featured';
 
   return (
     <div className="filter-panel">
       <div className="filter-primary-row">
         <label className="catalog-search">
-          <span>⌕</span>
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
           <input
             type="search"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Search creation, warmup, posting, Tinder..."
+            placeholder="Search by platform or task, e.g. warmup"
             aria-label="Search automation flows"
           />
-          {searchQuery && (
-            <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search">×</button>
-          )}
         </label>
 
-        <div className="price-range" aria-label="Filter by price">
-          <span>PRICE</span>
-          <label>
-            <b>$</b>
-            <input
-              type="number"
-              min="0"
-              value={minPrice}
-              onChange={(event) => setMinPrice(event.target.value)}
-              placeholder="Min"
-              aria-label="Minimum price"
-            />
-          </label>
-          <i>—</i>
-          <label>
-            <b>$</b>
-            <input
-              type="number"
-              min="0"
-              value={maxPrice}
-              onChange={(event) => setMaxPrice(event.target.value)}
-              placeholder="Max"
-              aria-label="Maximum price"
-            />
-          </label>
-        </div>
+        <label className="catalog-sort">
+          <span>Sort</span>
+          <select value={sortBy} onChange={(event) => setSortBy(event.target.value)} aria-label="Sort flows">
+            <option value="featured">Featured</option>
+            <option value="price-asc">Price: low to high</option>
+            <option value="price-desc">Price: high to low</option>
+          </select>
+        </label>
       </div>
 
       <div className="filter-platform-row">
-        <div className="platform-chips" aria-label="Filter by platform">
+        <div className="platform-chips" role="group" aria-label="Filter by platform">
           <button
             type="button"
             className={`platform-chip ${selectedPlatforms.length === 0 ? 'active' : ''}`}
+            aria-pressed={selectedPlatforms.length === 0}
             onClick={() => setSelectedPlatforms([])}
           >
-            All platforms
+            All
           </button>
           {platforms.map((platform) => {
             const active = selectedPlatforms.includes(platform.id);
@@ -80,18 +58,17 @@ export default function FilterHeader() {
                 type="button"
                 key={platform.id}
                 className={`platform-chip ${active ? 'active' : ''}`}
-                style={{ '--chip-accent': platform.color }}
+                aria-pressed={active}
                 onClick={() => togglePlatform(platform.id)}
               >
-                <i /> {platform.label}
+                {platform.label}
               </button>
             );
           })}
         </div>
 
-        <div className="filter-results">
-          <strong>{String(filteredProducts.length).padStart(2, '0')}</strong>
-          <span>flows</span>
+        <div className="filter-results" aria-live="polite">
+          <span>{filteredProducts.length} {filteredProducts.length === 1 ? 'flow' : 'flows'}</span>
           {hasFilters && <button type="button" onClick={clearFilters}>Clear</button>}
         </div>
       </div>

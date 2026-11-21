@@ -290,9 +290,10 @@ assert(adminComponent.includes('Deep scrollers'));
 assert(adminComponent.includes('Viewed a selected flow'));
 const appSource = fs.readFileSync('src/App.jsx', 'utf8');
 assert(appSource.includes('startEngagementTracking'));
-const engagementOffer = fs.readFileSync('src/components/EngagementOffer.jsx', 'utf8');
-assert(engagementOffer.includes('Still comparing?'));
-assert(!engagementOffer.includes('role="dialog"'), 'engagement prompt should be a non-blocking banner, not an interstitial modal');
+// The minimal storefront deliberately renders no popups, bell, or decorative animation.
+for (const removed of ['EngagementOffer', 'MrBeanFoldAnimation', 'CartToast', 'StorefrontNotifications', 'LeadMagnet']) {
+  assert(!appSource.includes(removed), `${removed} must not be rendered on the minimal storefront`);
+}
 assert(!appSource.includes('Do all flows include a video demo?'));
 assert(appSource.includes("What's visible before you pay."));
 assert(appSource.includes('How are checkout, payment, and delivery handled?'));

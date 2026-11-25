@@ -15,11 +15,7 @@ export default function Footer({ navigate, onOpenCustomRequest }) {
     if (typeof onOpenCustomRequest === 'function') {
       onOpenCustomRequest('flow');
     } else {
-      handleNav('/');
-      setTimeout(() => {
-        const btn = document.querySelector('.secondary-cta');
-        if (btn) btn.click();
-      }, 100);
+      handleScrollToSection('services');
     }
   };
 
@@ -64,8 +60,13 @@ export default function Footer({ navigate, onOpenCustomRequest }) {
                 </button>
               </li>
               <li>
+                <button type="button" onClick={() => handleScrollToSection('services')}>
+                  Services
+                </button>
+              </li>
+              <li>
                 <button type="button" onClick={handleCustomRequest}>
-                  Request a custom flow
+                  Request a quote
                 </button>
               </li>
             </ul>

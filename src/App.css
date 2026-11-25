@@ -37,15 +37,19 @@
 .hero-facts svg { flex: 0 0 auto; margin-top: 1px; fill: none; stroke: var(--accent-lime); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Sections share one rhythm. */
-.catalog-section, .custom-section, .process-section, .trust-section, .faq-section { width: min(var(--site-width), calc(100% - (var(--page-gutter) * 2))); margin: 0 auto; padding: clamp(40px, 7vw, 76px) 0; }
+.catalog-section, .services-section, .process-section, .trust-section, .faq-section { width: min(var(--site-width), calc(100% - (var(--page-gutter) * 2))); margin: 0 auto; padding: clamp(40px, 7vw, 76px) 0; }
 .section-heading { max-width: 640px; margin-bottom: 24px; }
-.section-heading h2, .custom-section h2 { font-size: clamp(1.5rem, 3.6vw, 2.1rem); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; }
+.section-heading h2 { font-size: clamp(1.5rem, 3.6vw, 2.1rem); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; }
 .section-heading p { margin-top: 10px; color: var(--text-secondary); font-size: var(--type-body); line-height: var(--leading-reading); }
 
-/* Custom build: one quiet band. */
-.custom-section { display: grid; gap: 18px; align-items: center; border-top: 1px solid var(--border-light); }
-.custom-section p { max-width: 62ch; margin-top: 10px; color: var(--text-secondary); font-size: var(--type-body); line-height: var(--leading-reading); }
-.custom-section .secondary-cta { justify-self: start; }
+/* Services: same quiet rows as the flow list. */
+.services-section { border-top: 1px solid var(--border-light); }
+.services-list { list-style: none; border-bottom: 1px solid var(--border-light); }
+.services-list li { padding: 20px 4px; display: grid; gap: 14px; align-items: center; border-top: 1px solid var(--border-light); }
+.services-list h3 { font-size: var(--type-title-sm); font-weight: 700; line-height: var(--leading-tight); }
+.services-list p { max-width: 62ch; margin-top: 6px; color: var(--text-secondary); font-size: 0.9375rem; line-height: var(--leading-reading); }
+.services-list .secondary-cta { justify-self: start; min-height: 46px; padding: 0 18px; font-size: var(--type-small); }
+.services-examples { max-width: 70ch; margin-top: 16px; color: var(--text-muted); font-size: var(--type-label); line-height: var(--leading-reading); }
 
 /* How buying works. */
 .process-section, .trust-section, .faq-section { border-top: 1px solid var(--border-light); }
@@ -80,7 +84,8 @@
   .hero-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .process-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; }
   .trust-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .custom-section { grid-template-columns: minmax(0, 1fr) auto; gap: 40px; }
+  .services-list li { padding: 22px 14px; grid-template-columns: minmax(0, 1fr) auto; gap: 32px; }
+  .services-list .secondary-cta { justify-self: end; }
 }
 
 @media (min-width: 900px) {

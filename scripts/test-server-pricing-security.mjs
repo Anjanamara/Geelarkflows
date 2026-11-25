@@ -232,8 +232,8 @@ runTest('Scenario 13: Multi-item cart calculates authoritative workflow subtotal
 });
 
 // 14. Server-computed total is authoritative across all items and quantities
-runTest('Scenario 14: All 25 catalog items exist in AUTHORITATIVE_CATALOG_MAP with valid positive prices', () => {
-  assert.equal(AUTHORITATIVE_CATALOG_MAP.size, 25);
+runTest('Scenario 14: Every catalog item exists in AUTHORITATIVE_CATALOG_MAP with valid positive prices', () => {
+  assert.equal(AUTHORITATIVE_CATALOG_MAP.size, products.length);
   for (const [id, item] of AUTHORITATIVE_CATALOG_MAP.entries()) {
     assert.ok(item.title, `Item ${id} missing title`);
     assert.ok(item.price > 0, `Item ${id} has invalid price: ${item.price}`);

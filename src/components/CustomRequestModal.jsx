@@ -1,6 +1,45 @@
 import { useState, useEffect, useRef } from 'react';
 import './CustomRequestModal.css';
 
+// The back end accepts two request types ('flow' | 'consulting'). Services that
+// are not a flow map onto 'consulting' and are named at the top of the details
+// so the team can see which service was asked for.
+const SERVICES = {
+  flow: {
+    label: 'Custom flow creation',
+    apiType: 'flow',
+    badge: 'Custom build',
+    title: 'Build the flow your operation needs.',
+    copy: 'Tell us what you want to build. We will scope it and reply by email.',
+    placeholder: 'Describe the platform, workflow steps, triggers, volume, and target outcomes...',
+  },
+  accounts: {
+    label: 'Account management',
+    apiType: 'consulting',
+    badge: 'Account management',
+    title: 'Let us run your accounts.',
+    copy: 'Tell us the platforms, how many accounts, and what should be handled day to day. We will scope it and reply by email.',
+    placeholder: 'Which platforms, how many accounts, and what should be handled day to day?',
+  },
+  va: {
+    label: 'Virtual assistants',
+    apiType: 'consulting',
+    badge: 'Virtual assistants',
+    title: 'Hand off the manual work.',
+    copy: 'Tell us the tasks you want handed off and roughly how many hours you need. We will scope it and reply by email.',
+    placeholder: 'What tasks should the assistant handle, and about how many hours per week?',
+  },
+  consulting: {
+    label: 'Consulting & strategy',
+    apiType: 'consulting',
+    badge: 'Consulting',
+    title: 'Get a clear automation plan.',
+    copy: 'Need direction? Share your goals and we will map out a plan.',
+    placeholder: 'Describe your goals, your current setup, and what you want to achieve...',
+  },
+};
+const TAGGED_SERVICES = ['accounts', 'va'];
+
 export default function CustomRequestModal({ isOpen, onClose, requestType }) {
   const [formData, setFormData] = useState({
     name: '',
@@ -111,8 +150,10 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
         body: JSON.stringify({
           name: formData.name.trim(),
           email: formData.email.trim(),
-          type: formData.type || 'flow',
-          details: formData.details.trim(),
+          type: (SERVICES[formData.type] || SERVICES.flow).apiType,
+          details: TAGGED_SERVICES.includes(formData.type)
+            ? `Service requested: ${SERVICES[formData.type].label}\n\n${formData.details.trim()}`
+            : formData.details.trim(),
         }),
       });
 
@@ -134,6 +175,7 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
   };
 
   const isFlow = formData.type === 'flow';
+  const service = SERVICES[formData.type] || SERVICES.flow;
 
   return (
     <div className="custom-request-overlay" onClick={onClose}>
@@ -149,13 +191,9 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
           <div className="floating-shape shape-3"></div>
 
           <div className="visual-content">
-            <div className="badge">{isFlow ? 'Custom Development' : 'Expert Guidance'}</div>
-            <h2 id="custom-request-title">{isFlow ? 'Build the flow your operation needs.' : 'Get a clear automation plan.'}</h2>
-            <p>
-              {isFlow 
-                ? 'Tell us what you want to build. From custom automation to complete workflows, we bring your ideas to life with precision.' 
-                : 'Need expert direction? Let\'s discuss your goals and map out a comprehensive strategy for success.'}
-            </p>
+            <div className="badge">{service.badge}</div>
+            <h2 id="custom-request-title">{service.title}</h2>
+            <p>{service.copy}</p>
           </div>
         </div>
 
@@ -258,8 +296,9 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
                     disabled={isSubmitting}
                     required
                   >
-                    <option value="flow">Custom Flow Creation</option>
-                    <option value="consulting">Consulting & Strategy</option>
+                    {Object.entries(SERVICES).map(([key, item]) => (
+                      <option key={key} value={key}>{item.label}</option>
+                    ))}
                   </select>
                   <svg className="select-arrow" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none">
                     <polyline points="6 9 12 15 18 9"></polyline>
@@ -275,9 +314,9 @@ export default function CustomRequestModal({ isOpen, onClose, requestType }) {
                     onChange={handleChange}
                     onFocus={() => setFocusedField('details')}
                     onBlur={() => setFocusedField(null)}
-                    maxLength={5000}
+                    maxLength={4900}
                     disabled={isSubmitting}
-                    placeholder="Describe the platform, workflow steps, triggers, volume, and target outcomes..."
+                    placeholder={service.placeholder}
                     required
                   />
                   <div className="input-line"></div>

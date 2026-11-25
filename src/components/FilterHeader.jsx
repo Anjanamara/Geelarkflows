@@ -68,8 +68,12 @@ export default function FilterHeader() {
         </div>
 
         <div className="filter-results" aria-live="polite">
-          <span>{filteredProducts.length} {filteredProducts.length === 1 ? 'flow' : 'flows'}</span>
-          {hasFilters && <button type="button" onClick={clearFilters}>Clear</button>}
+          {hasFilters && (
+            <>
+              <span>{filteredProducts.length} {filteredProducts.length === 1 ? 'flow' : 'flows'} found</span>
+              <button type="button" onClick={clearFilters}>Clear</button>
+            </>
+          )}
         </div>
       </div>
     </div>

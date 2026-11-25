@@ -63,6 +63,10 @@ const faqs = [
     question: 'Can you build a custom GeeLark RPA workflow?',
     answer: 'Yes. Custom development is available for video automation, metadata workflows, analytics tracking, mobile SEO searches, content generation, and large-scale account operations.',
   },
+  {
+    question: 'Do you offer account management or virtual assistants?',
+    answer: 'Yes. Send a request describing the platforms, number of accounts, tasks, and hours you need. We will scope the service and reply by email. Custom builds are handled the same way.',
+  },
 ];
 
 const operationSteps = [
@@ -88,6 +92,27 @@ function Brand({ href = '#top', onClick }) {
     </a>
   );
 }
+
+const services = [
+  {
+    key: 'flow',
+    title: 'Custom builds',
+    copy: 'A workflow built around your exact process, for when no ready-made flow fits.',
+    cta: 'Request a build',
+  },
+  {
+    key: 'accounts',
+    title: 'Account management',
+    copy: 'Hand the day-to-day running of your accounts to us. Tell us the platforms and volume and we will scope it.',
+    cta: 'Ask about account management',
+  },
+  {
+    key: 'va',
+    title: 'Virtual assistants',
+    copy: 'Assistants for the manual work around your operation, scoped to the tasks and hours you need.',
+    cta: 'Ask about virtual assistants',
+  },
+];
 
 const heroFacts = [
   'Fixed price, shown before checkout',
@@ -136,14 +161,15 @@ function Storefront({ navigate }) {
           <Brand />
           <nav className={`desktop-nav ${isMenuOpen ? 'is-open' : ''}`} aria-label="Primary navigation">
             <button type="button" onClick={() => scrollToSection('catalog')}>Flows</button>
+            <button type="button" onClick={() => scrollToSection('services')}>Services</button>
             <button type="button" onClick={() => scrollToSection('process')}>How it works</button>
             <button type="button" onClick={() => scrollToSection('trust')}>Policies</button>
             <button type="button" onClick={() => scrollToSection('faq')}>FAQ</button>
             <a href="/contact" onClick={goTo('/contact')}>Support</a>
-            <button className="mobile-custom-link" type="button" onClick={() => openRequest('flow')}>Request a custom flow</button>
+            <button className="mobile-custom-link" type="button" onClick={() => openRequest('flow')}>Get a quote</button>
           </nav>
           <div className="nav-actions">
-            <button className="nav-custom-button" type="button" onClick={() => openRequest('flow')}>Custom build</button>
+            <button className="nav-custom-button" type="button" onClick={() => openRequest('flow')}>Get a quote</button>
             <FloatingCart />
             <button
               className="menu-button"
@@ -160,19 +186,20 @@ function Storefront({ navigate }) {
 
       <main id="top">
         <section className="hero-section" aria-labelledby="hero-title">
-          <p className="eyebrow">Independent marketplace · {products.length} ready-made flows</p>
+          <p className="eyebrow">Flows, custom builds and account services for GeeLark</p>
           <h1 id="hero-title">Ready-made automation for your GeeLark cloud phones.</h1>
           <p className="hero-lede">
             Buy a flow once and run it as often as you need. Account creation, warmup,
             posting and more for Instagram, TikTok, Snapchat, Reddit, Facebook, YouTube,
-            Threads and dating apps.
+            Threads and dating apps. Prefer to hand it off? We also build custom flows,
+            manage accounts and provide virtual assistants.
           </p>
           <div className="hero-actions">
             <button type="button" className="primary-cta" onClick={() => scrollToSection('catalog')}>
               Browse the flows
             </button>
-            <button type="button" className="secondary-cta" onClick={() => openRequest('flow')}>
-              Request a custom flow
+            <button type="button" className="secondary-cta" onClick={() => scrollToSection('services')}>
+              Our services
             </button>
           </div>
           <ul className="hero-facts" aria-label="What you can rely on">
@@ -194,15 +221,25 @@ function Storefront({ navigate }) {
           <ProductGrid onViewDetails={openProduct} />
         </section>
 
-        <section className="custom-section" id="custom" aria-labelledby="custom-title">
-          <div>
-            <h2 id="custom-title">Need something that isn’t listed?</h2>
-            <p>
-              Tell us the outcome you want and we’ll scope a custom workflow. Examples:{' '}
-              {specialties.map((specialty) => specialty.title.toLowerCase().replace('seo', 'SEO')).join(', ')}.
-            </p>
+        <section className="services-section" id="services" aria-labelledby="services-title">
+          <div className="section-heading">
+            <h2 id="services-title">Services</h2>
+            <p>Beyond ready-made flows, we can do the work for you. Send a request and we will scope it and reply by email.</p>
           </div>
-          <button type="button" className="secondary-cta" onClick={() => openRequest('flow')}>Request a custom flow</button>
+          <ul className="services-list">
+            {services.map((service) => (
+              <li key={service.key}>
+                <div>
+                  <h3>{service.title}</h3>
+                  <p>{service.copy}</p>
+                </div>
+                <button type="button" className="secondary-cta" onClick={() => openRequest(service.key)}>{service.cta}</button>
+              </li>
+            ))}
+          </ul>
+          <p className="services-examples">
+            Custom build examples: {specialties.map((specialty) => specialty.title.toLowerCase().replace('seo', 'SEO')).join(', ')}.
+          </p>
         </section>
 
         <section className="process-section" id="process">

@@ -502,6 +502,61 @@ export const products = [
       requirements: [EXISTING_ACCOUNT_REQUIREMENT, 'The message library and reply logic you want the flow to use, and which of the five supported apps you need.'],
     },
   ),
+  createFlow(
+    'dating-account-creation',
+    'dating',
+    'Dating App Account Creation',
+    800,
+    'Account creation',
+    'A structured account-creation workflow for one supported dating app.',
+    ['Signup orchestration', 'Email, SMS & CAPTCHA handling', 'Recovery setup', 'Run reporting'],
+    {
+      supportedPlatforms: ['Tinder', 'Wink', 'Bumble', 'Badoo', 'Grindr'],
+      howItWorks: [
+        'Launches your chosen dating app inside your GeeLark cloud phone profile, using that profile\'s own device fingerprint.',
+        'Enters the signup details you supply.',
+        'Completes the email or SMS verification step with the inbox or number you provide, and handles any CAPTCHA the app presents.',
+        'Records the login and recovery details in the run report.',
+      ],
+      requirements: [...CREATION_REQUIREMENTS, 'Which of the five supported apps you need — the flow is configured per app, not generically.'],
+    },
+  ),
+  createFlow(
+    'dating-profile-setup',
+    'dating',
+    'Dating App Profile Setup',
+    150,
+    'Profile management',
+    'Fills in a dating profile from the photos and details you provide.',
+    ['Profile photos', 'Bio and prompts', 'Basic details'],
+    {
+      supportedPlatforms: ['Tinder', 'Wink', 'Bumble', 'Badoo', 'Grindr'],
+      howItWorks: [
+        'Opens the existing profile on your chosen app inside its GeeLark profile.',
+        'Uploads the photos you provide and enters your bio, prompts, and basic details.',
+        'Reports which fields were completed and which, if any, need manual attention.',
+      ],
+      requirements: [EXISTING_ACCOUNT_REQUIREMENT, 'The photos, bio text, and profile details you want entered, prepared ahead of the run.', 'Which of the five supported apps you need.'],
+    },
+  ),
+  createFlow(
+    'dating-swiping',
+    'dating',
+    'Dating App Swiping',
+    300,
+    'Engagement',
+    'Runs paced swiping on one supported dating app using the preferences you configure.',
+    ['Configurable preferences', 'Paced sessions', 'Daily limits', 'Run reporting'],
+    {
+      supportedPlatforms: ['Tinder', 'Wink', 'Bumble', 'Badoo', 'Grindr'],
+      howItWorks: [
+        'Logs into the existing profile on your chosen app inside its GeeLark profile.',
+        'Applies the preferences you set and swipes at the pace you configure, within the daily limits you choose.',
+        'Reports how many profiles were viewed and swiped in each session.',
+      ],
+      requirements: [EXISTING_ACCOUNT_REQUIREMENT, 'The preferences and daily limits you want the flow to use.', 'Which of the five supported apps you need.'],
+    },
+  ),
 ];
 
 export const platforms = [
